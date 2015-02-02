@@ -19,7 +19,11 @@ confirm() ->
     rt:wait_until_ring_converged(Cluster1),
     rt:wait_until_ring_converged(Cluster2),
     rt:wait_until_ring_converged(Cluster3),
-    timer:sleep(6000), %%TODO: wait for inter_dc_manager to be up
+
+    rt:wait_until_registered(HeadCluster1, inter_dc_manager),
+    rt:wait_until_registered(HeadCluster2, inter_dc_manager),
+    rt:wait_until_registered(HeadCluster3, inter_dc_manager),
+
     {ok, DC1} = rpc:call(HeadCluster1, inter_dc_manager, start_receiver,[8091]),
     {ok, DC2} = rpc:call(HeadCluster2, inter_dc_manager, start_receiver,[8092]),
     {ok, DC3} = rpc:call(HeadCluster3, inter_dc_manager, start_receiver,[8093]),
