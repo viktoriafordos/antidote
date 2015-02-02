@@ -70,7 +70,7 @@ handle_command(trigger, _Sender, State=#state{partition=Partition,
         DCs ->
             {NewReaderState, Transactions} =
                 clocksi_transaction_reader:get_next_transactions(Reader),
-            case Transactions of
+            NewReader = case Transactions of
                 [] ->
                     %% Send heartbeat
                     Heartbeat = [#operation
@@ -84,20 +84,14 @@ handle_command(trigger, _Sender, State=#state{partition=Partition,
                     %% Receiving DC treats hearbeat like a transaction
                     %% So wrap heartbeat in a transaction structure
                     Transaction = {TxId, {DcId, Time}, Clock, Heartbeat},
-                    case inter_dc_communication_sender:propagate_sync(
-                           {replicate, [Transaction]}, DCs) of
-                        ok ->
-                            NewReader = NewReaderState;
-                        _ ->
-                            NewReader = NewReaderState
-                    end;
+                    inter_dc_communication_sender:propagate_sync(
+                        {replicate, [Transaction]}, DCs),
+                    NewReaderState;
                 [_H|_T] ->
                     case inter_dc_communication_sender:propagate_sync(
                            {replicate, Transactions}, DCs) of
-                        ok ->
-                            NewReader = NewReaderState;
-                        _ ->
-                            NewReader = Reader
+                        ok -> NewReaderState;
+                        _  -> Reader
                     end
             end,
             State#state{reader=NewReader}
