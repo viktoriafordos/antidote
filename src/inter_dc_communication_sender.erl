@@ -48,7 +48,7 @@
 %% Send a message to all DCs over a tcp connection
 propagate_sync(Message, DCs) ->
     Errors = lists:foldl(
-               fun({DcAddress, Port}, Acc) ->
+               fun({_DcId, {DcAddress, Port}}, Acc) ->
                        case inter_dc_communication_sender:start_link(
                               Port, DcAddress, Message, self()) of
                            {ok, _} ->
@@ -90,18 +90,16 @@ init([Port,Host,Message,ReplyTo]) ->
 
 connect(timeout, State=#state{port=Port,host=Host,message=Message}) ->
     case  gen_tcp:connect(Host, Port,
-                          [{active,true},binary, {packet,2}], ?CONNECT_TIMEOUT) of
+                          [{active,once}, binary, {packet,2}], ?CONNECT_TIMEOUT) of
         { ok, Socket} ->
-            ok = inet:setopts(Socket, [{active, once}]),
             ok = gen_tcp:send(Socket, term_to_binary(Message)),
-            ok = inet:setopts(Socket, [{active, once}]),
             {next_state, wait_for_ack, State#state{socket=Socket},?CONNECT_TIMEOUT};
         {error, _Reason} ->
             lager:error("Couldnot connect to remote DC"),
             {stop, normal, State}
     end.
 
-wait_for_ack({acknowledge, _DC}, State=#state{socket=_Socket, message=_Message} )->
+wait_for_ack(acknowledge, State)->
     {next_state, stop, State,0};
 
 wait_for_ack(timeout, State) ->
@@ -117,7 +115,6 @@ stop_error(timeout, State=#state{socket=Socket}) ->
     {stop, error, State}.
 
 handle_info({tcp, Socket, Bin}, StateName, #state{socket=Socket} = StateData) ->
-    _ = inet:setopts(Socket, [{active, once}]),
     gen_fsm:send_event(self(), binary_to_term(Bin)),
     {next_state, StateName, StateData};
 

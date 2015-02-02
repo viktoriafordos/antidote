@@ -30,6 +30,7 @@ confirm() ->
 
     lager:info("Waiting for ring to converge."),
     rt:wait_until_ring_converged(Nodes),
+    timer:sleep(1000), %%TODO: wait for antidote to be up
 
     Node = hd(Nodes),
 
