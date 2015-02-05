@@ -64,6 +64,7 @@ init([Partition]) ->
 
 handle_command(trigger, _Sender, State=#state{partition=Partition,
                                               reader=Reader}) ->
+    timer:sleep(?REPL_PERIOD),
     {ok, DCs} = inter_dc_manager:get_dcs(),
     NewState = case DCs of
         [] -> State;
@@ -96,7 +97,6 @@ handle_command(trigger, _Sender, State=#state{partition=Partition,
             end,
             State#state{reader=NewReader}
     end,
-    timer:sleep(?REPL_PERIOD),
     riak_core_vnode:send_command(self(), trigger),
     {noreply,NewState}.
 
