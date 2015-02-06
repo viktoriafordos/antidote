@@ -43,8 +43,10 @@ init([]) ->
     {ok, #state{dcs=[]}}.
 
 handle_call({start_receiver, Port}, _From, State) ->
-    {ok, _} = antidote_sup:start_rep(Port),
-    {reply, {ok, my_dc(Port)}, State#state{port=Port}};
+    {ok, _} = antidote_sup:start_rep(self(), Port),
+    receive
+        ready -> {reply, {ok, my_dc(Port)}, State#state{port=Port}}
+    end;
 
 handle_call(get_dcs, _From, #state{dcs=DCs} = State) ->
     {reply, {ok, DCs}, State};
