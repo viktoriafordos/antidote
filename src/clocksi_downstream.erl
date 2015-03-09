@@ -37,21 +37,27 @@ generate_downstream_op(Transaction, Node, Key, Type, Update) ->
                                       Type) of
         {ok, Snapshot} ->
             DownstreamOp = case Type of
-                            crdt_bcounter ->
-                                case Type:generate_downstream(Op, Actor, Snapshot) of
-                                    {ok, OpParam} -> {update, OpParam};
-                                    {error, Error} -> {error, Error}
-                                end;
-                            crdt_orset ->
-                                {ok, OpParam} = Type:generate_downstream(Op, Actor, Snapshot),
-                                {update, OpParam};
-                            crdt_pncounter ->
-                                {ok, OpParam} = Type:generate_downstream(Op, Actor, Snapshot),
-                                {update, OpParam};
-                            _ ->
-                                {ok, NewState} = Type:update(Op, Actor, Snapshot),
-                                {merge, NewState}
-                            end,
+                crdt_bcounter ->
+                    case Type:generate_downstream(Op, Actor, Snapshot) of
+                        {ok, OpParam} -> 
+                            {update, OpParam};
+                        {error, {no_permissions, {Id,V}}} -> 
+                            {_Index, Master} = Node,
+                            Time = Transaction#transaction.snapshot_time,
+                            bcounter_manager:request_permissions(
+                                Master, Key, Time, Snapshot, Id, V),
+                            {error, no_permissions}
+                    end;
+                crdt_orset ->
+                    {ok, OpParam} = Type:generate_downstream(Op, Actor, Snapshot),
+                    {update, OpParam};
+                crdt_pncounter ->
+                    {ok, OpParam} = Type:generate_downstream(Op, Actor, Snapshot),
+                    {update, OpParam};
+                _ ->
+                    {ok, NewState} = Type:update(Op, Actor, Snapshot),
+                    {merge, NewState}
+                end,
             case DownstreamOp of
                 {error, Reason} -> {error, Reason};
                 _ -> {ok, DownstreamOp}
