@@ -35,6 +35,10 @@ currentdevrel: stagedevrel compile-riak-test
 riak-test: currentdevrel
 	$(foreach dep,$(wildcard riak_test/*.erl), ../riak_test/riak_test -v -c antidote -t $(dep);)
 
+my-test: 
+	$(REBAR) skip_deps=true riak_test_compile
+	../riak_test/riak_test -v -c antidote -t wallet_multiple_dcs1_test
+
 ##
 ## Developer targets
 ##
