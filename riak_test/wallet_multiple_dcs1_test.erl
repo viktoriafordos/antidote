@@ -104,8 +104,7 @@ parallel_credit_test(Cluster1, Cluster2, Cluster3) ->
 	Quiescent_Balance = 2550,
 	
 	register(test, self()),
-	register(recorder, spawn(recorder, start, [])),
-	lager:info("recorder process started!"),
+	global:register_name(rrecorder, spawn(recorder, start, [])),
 	
 	spawn(?MODULE, multiple_credits, [Node1, Key, node1, Pid]),
 	spawn(?MODULE, multiple_credits, [Node2, Key, node2, Pid]),
@@ -143,7 +142,7 @@ parallel_credit_test(Cluster1, Cluster2, Cluster3) ->
 		end
 	end,
 	?assertEqual(Result, pass),
-	recorder ! finish,
+	%global:send(rrecorder, finish),
 	pass.
 	
 multiple_credits(Node, Key, Actor, ReplyTo) ->

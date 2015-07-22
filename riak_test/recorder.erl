@@ -6,6 +6,7 @@ start() ->
 	record().
 
 record() ->
+	lager:info("########Recorder started!########"),
 	receive
 		found -> 	
 			test ! received,
