@@ -1,6 +1,9 @@
 -module(wallet_multiple_dcs1_test).
 
--export([confirm/0, parallel_credit_test/3, multiple_credits/4]).
+-compile({parse_transform, rt_intercept_pt}).
+
+-export([confirm/0, multiple_credits/4]).
+%%, parallel_credit_test/3]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -34,67 +37,17 @@ confirm() ->
 	ok = rpc:call(HeadCluster2, inter_dc_manager, add_list_dcs,[[DC1, DC3]]),
 	ok = rpc:call(HeadCluster3, inter_dc_manager, add_list_dcs,[[DC1, DC2]]),
    
-	credit_test(Cluster1, Cluster2, Cluster3),
+    AllNodes = nodes(),
+    lager:info("########Cluster Nodes: ~p#########~n", [AllNodes]),
+    
+    %% Add intercept for finish_updtae_dc
+    Intercept = {inter_dc_repl_update, [{{finish_update_dc, 4}, finish_update_dc_intrcptd}]},
+    [ok = rt_intercept:add(Node, Intercept) || Node <- AllNodes],
+    
 	parallel_credit_test(Cluster1, Cluster2, Cluster3),
 	
 	pass.
- 	
-credit_test(Cluster1, Cluster2, Cluster3) -> 
-	Node1 = hd(Cluster1),
-	Node2 = hd(Cluster2),
-	Node3 = hd(Cluster3),
-	
-	{ok, BalanceBefore} = my_walletapp1:getbalance(Node1, key1),
-	%% First update in Node1
-	CreditResult11 = my_walletapp1:credit(Node1, key1, 100, node1),
-	?assertMatch({ok, _}, CreditResult11),
-	%% Second update in Node1
-	CreditResult12 = my_walletapp1:credit(Node1, key1, 300, node1),
-	?assertMatch({ok, _}, CreditResult12),
-	%% Commit time in Node1
-	{ok,{_,_,CommitTime}} = CreditResult12,
-	
-	ExpectedBal1 = BalanceBefore+400,
-	%%Read in Node1
-	ReadBalance11 = my_walletapp1:getbalance(Node1, key1),
-	?assertEqual({ok, ExpectedBal1}, ReadBalance11),
-	lager:info("Done credit in Node1"),
-	
-	%%Read in Node2
-	ReadBalance21 = my_walletapp1:getbalance(Node2, key1, CommitTime),
-	{ok, {_,[ReadVal2],_} } = ReadBalance21,
-	?assertEqual(ExpectedBal1, ReadVal2),
-	lager:info("Done read in Node2"),
-	
-	%%Read in Node3
-	ReadBalance31 = my_walletapp1:getbalance(Node3, key1, CommitTime),
-	{ok, {_,[ReadVal3],_} } = ReadBalance31,
-	?assertEqual(ExpectedBal1, ReadVal3),
-	
-	lager:info("Done first round of read, I am gonna append using debit"),
-	%%First update in Node3
-	DebitResult31 = my_walletapp1:debit(Node3, key1, 200, actor1),
-	?assertMatch({ok, _}, DebitResult31),
-	%%Commit time in Node3
-	{ok,{_,_,CommitTime2}} = DebitResult31,
-	
-	ExpectedBal2 = ExpectedBal1 - 200,
-	%%Read in Node3
-	ReadBalance32 = my_walletapp1:getbalance(Node3, key1),
-	?assertMatch({ok, ExpectedBal2}, ReadBalance32),
-	lager:info("Done Debit in Node3"),
-	%%Read in Node2
-	ReadBalance22 = my_walletapp1:getbalance(Node2, key1, CommitTime2),
-	{ok, {_,[ReadVal4],_} } = ReadBalance22,
-	?assertEqual(ExpectedBal2, ReadVal4),
-	lager:info("Done read in Node2"),
-	%%Read in Node1
-	ReadBalance12 = my_walletapp1:getbalance(Node1, key1, CommitTime2),
-	{ok, {_,[ReadVal5],_} } = ReadBalance12,
-	?assertEqual(ExpectedBal2, ReadVal5),
-		
-	pass.
-	
+ 
 parallel_credit_test(Cluster1, Cluster2, Cluster3) ->
 	Node1 = hd(Cluster1),
 	Node2 = hd(Cluster2),
@@ -102,9 +55,6 @@ parallel_credit_test(Cluster1, Cluster2, Cluster3) ->
 	Key = parkey,
 	Pid = self(),
 	Quiescent_Balance = 2550,
-	
-	register(test, self()),
-	global:register_name(rrecorder, spawn(recorder, start, [])),
 	
 	spawn(?MODULE, multiple_credits, [Node1, Key, node1, Pid]),
 	spawn(?MODULE, multiple_credits, [Node2, Key, node2, Pid]),
@@ -142,7 +92,6 @@ parallel_credit_test(Cluster1, Cluster2, Cluster3) ->
 		end
 	end,
 	?assertEqual(Result, pass),
-	%global:send(rrecorder, finish),
 	pass.
 	
 multiple_credits(Node, Key, Actor, ReplyTo) ->
@@ -163,4 +112,3 @@ multiple_credits(Node, Key, Actor, ReplyTo) ->
 	
 	{ok, {_,_,CommitTime}} = DebitRes5,
 	ReplyTo ! {ok, CommitTime}.
-	
