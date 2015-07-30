@@ -7,5 +7,5 @@
 
 finish_update_dc_intrcptd(Dc, DcQ, Cts, State) ->
 	%% This should arise an execption (Statee is mis-spelled)
-	?M:finish_update_dc(Dc, DcQ, Cts, Statee).
+	?M:finish_update_dc(Dc, DcQ, Cts, State).
 	
