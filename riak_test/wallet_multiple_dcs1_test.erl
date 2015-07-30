@@ -1,7 +1,5 @@
 -module(wallet_multiple_dcs1_test).
 
--compile({parse_transform, rt_intercept_pt}).
-
 -export([confirm/0, multiple_credits/4]).
 %%, parallel_credit_test/3]).
 
