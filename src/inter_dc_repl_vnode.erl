@@ -46,7 +46,7 @@
                 reader}).
 
 %% REPL_PERIOD: Frequency of checking new transactions and sending to other DC
--define(REPL_PERIOD, 5000).
+-define(REPL_PERIOD, 10000).
 
 start_vnode(I) ->
     {ok, Pid} = riak_core_vnode_master:get_vnode_pid(I, ?MODULE),
@@ -89,11 +89,9 @@ handle_command(trigger, _Sender, State=#state{partition=Partition,
                         {replicate, [Transaction]}, DCs),
                     NewReaderState;
                 [_H|_T] ->
-                    case inter_dc_communication_sender:propagate_sync(
-                           {replicate, Transactions}, DCs) of
-                        ok -> NewReaderState;
-                        _  -> Reader
-                    end
+                    ok = inter_dc_communication_sender:propagate_sync(
+                           {replicate, Transactions}, DCs),
+                    NewReaderState
             end,
             State#state{reader=NewReader}
     end,

@@ -28,8 +28,15 @@
 -export([start_link/2]).
 -export([init/1]).
 
+<<<<<<< HEAD
 start_link(Pid, Port) ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, [Pid, Port]).
+=======
+%% Starts tcp listening server on the "Port" and waits for incoming
+%% connection request from other DCs
+start_link(Pid, Port) ->
+    supervisor:start_link({local, ?MODULE}, ?MODULE, [Pid,Port]).
+>>>>>>> master
 
 init([Pid, Port]) ->
     Listener = {inter_dc_communication_recvr,

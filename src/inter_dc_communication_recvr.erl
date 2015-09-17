@@ -46,11 +46,14 @@ init([Pid, Port]) ->
     {ok, ListenSocket} = gen_tcp:listen(
                            Port,
                            [{active,false}, binary,
-                            {packet,2},{reuseaddr, true}
+                            {packet,4},{reuseaddr, true}
                            ]),
     Pid ! ready,
     {ok, accept, #state{port=Port, listener=ListenSocket},0}.
 
+%% Accepts an incoming tcp connection and spawn and new fsm 
+%% to process the connection, so that new connections could 
+%% be processed in parallel
 accept(timeout, State=#state{listener=ListenSocket}) ->
     {ok, AcceptSocket} = gen_tcp:accept(ListenSocket),
     {ok, _} = inter_dc_communication_fsm_sup:start_fsm([AcceptSocket]),
@@ -68,5 +71,7 @@ handle_sync_event(_Event, _From, _StateName, StateData) ->
 
 code_change(_OldVsn, StateName, State, _Extra) -> {ok, StateName, State}.
 
-terminate(_Reason, _SN, _SD) ->
+terminate(_Reason, _SN, _SD=#state{listener=ListenSocket}) ->
+    gen_tcp:close(ListenSocket),
+    lager:info("Closing socket"),
     ok.
