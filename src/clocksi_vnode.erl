@@ -69,6 +69,7 @@
                 prepared_tx :: cache_id(),
                 committed_tx :: cache_id(),
                 active_txs_per_key :: cache_id(),
+		min_prepared,
 		read_servers :: non_neg_integer()}).
 
 %%%===================================================================
@@ -204,11 +205,13 @@ get_cache_name(Partition,Base) ->
 %%      the transactions it participates on.
 init([Partition]) ->
     PreparedTx = open_table(Partition),
+    %%true = ets:insert(Partition, {min_prepared, false}),
     CommittedTx = ets:new(committed_tx,[set]),
     ActiveTxsPerKey = ets:new(active_txs_per_key,[bag]),
     Num = clocksi_readitem_fsm:start_read_servers(Partition,?READ_CONCURRENCY),
     {ok, #state{partition=Partition,
                 prepared_tx=PreparedTx,
+		min_prepared=false,
                 committed_tx=CommittedTx,
                 active_txs_per_key=ActiveTxsPerKey,
 		read_servers=Num}}.
@@ -417,16 +420,17 @@ terminate(_Reason, #state{partition=Partition} = _State) ->
 %%% Internal Functions
 %%%===================================================================
 
-prepare(Transaction, TxWriteSet, CommittedTx, ActiveTxPerKey, PreparedTx, PrepareTime)->
+prepare(Transaction, TxWriteSet, CommittedTx, ActiveTxPerKey, PreparedTx, PrepareTime) ->
     TxId = Transaction#transaction.txn_id,
     case certification_check(TxId, TxWriteSet, CommittedTx, ActiveTxPerKey) of
         true ->
             case TxWriteSet of 
                 [{Key, Type, {Op, Actor}} | Rest] -> 
 		    %% true = ets:insert(ActiveTxPerKey, {Key, Type, TxId}),
-		    PrepDict = set_prepared(PreparedTx,[{Key, Type, {Op, Actor}} | Rest],TxId,PrepareTime,dict:new()),
+		    PrepDict = set_prepared(PreparedTx,[{Key, Type, {Op, Actor}} | Rest],TxId,PrepareTime,false,dict:new()),
 		    NewPrepare = now_microsec(erlang:now()),
-		    ok = reset_prepared(PreparedTx,[{Key, Type, {Op, Actor}} | Rest],TxId,NewPrepare,PrepDict),
+		    %% ok = reset_prepared(PreparedTx,[{Key, Type, {Op, Actor}} | Rest],TxId,NewPrepare,PrepDict),
+		    true = reset_prepared(PreparedTx,{TxId,NewPrepare}, false, PrepDict),
 		    LogRecord = #log_record{tx_id=TxId,
 					    op_type=prepare,
 					    op_payload=NewPrepare},
@@ -442,9 +446,9 @@ prepare(Transaction, TxWriteSet, CommittedTx, ActiveTxPerKey, PreparedTx, Prepar
     end.
 
 
-set_prepared(_PreparedTx,[],_TxId,_Time,Acc) ->
+set_prepared(_PreparedTx,[],_TxId,_Time, _MinPrep, Acc) ->
     Acc;
-set_prepared(PreparedTx,[{Key, _Type, {_Op, _Actor}} | Rest],TxId,Time,Acc) ->
+set_prepared(PreparedTx,[{Key, _Type, {_Op, _Actor}} | Rest], TxId, Time, _MinPrep, Acc) ->
     AList = case ets:lookup(PreparedTx, Key) of
 		[] ->
 		    true = ets:insert(PreparedTx, {Key, [{TxId, Time}]}),
@@ -452,20 +456,26 @@ set_prepared(PreparedTx,[{Key, _Type, {_Op, _Actor}} | Rest],TxId,Time,Acc) ->
 		[{Key, List}] ->
 		    case lists:keymember(TxId, 1, List) of
 			true ->
-			    set_prepared(PreparedTx,Rest,TxId,Time,Acc);
+			    ok;
 			false ->	
 			    true = ets:update_element(PreparedTx, Key, {2, [{TxId, Time}|List]})
 		    end,
 		    List
 	    end,
-    set_prepared(PreparedTx,Rest,TxId,Time,dict:append_list(Key,AList,Acc)).
+    set_prepared(PreparedTx,Rest,TxId,Time,false,dict:append_list(Key,AList,Acc)).
 
-reset_prepared(_PreparedTx,[],_TxId,_Time,_ActiveTxs) ->
-    ok;
-reset_prepared(PreparedTx,[{Key, _Type, {_Op, _Actor}} | Rest],TxId,Time,ActiveTxs) ->
-    %% Could do this more efficiently in case of multiple updates to the same key
-    true = ets:update_element(PreparedTx, Key, {2, [{TxId, Time}|dict:fetch(Key,ActiveTxs)]}), 
-    reset_prepared(PreparedTx,Rest,TxId,Time,ActiveTxs).
+reset_prepared(PreparedTx, {TxId, Time}, _MinPrep, ActiveTxs) ->
+    List = dict:fold(fun(Key,Val,Acc) ->
+			     [{Key,[{TxId,Time}|Val]}|Acc]
+		     end, [], ActiveTxs),
+    ets:insert(PreparedTx, List).
+
+%% reset_prepared(_PreparedTx,[],_TxId,_Time,_ActiveTxs) ->
+%%     ok;
+%% reset_prepared(PreparedTx,[{Key, _Type, {_Op, _Actor}} | Rest],TxId,Time,ActiveTxs) ->
+%%     %% Could do this more efficiently in case of multiple updates to the same key
+%%     true = ets:update_element(PreparedTx, Key, {2, [{TxId, Time}|dict:fetch(Key,ActiveTxs)]}), 
+%%     reset_prepared(PreparedTx,Rest,TxId,Time,ActiveTxs).
 
 
 commit(Transaction, TxCommitTime, Updates, _CommittedTx, State)->
