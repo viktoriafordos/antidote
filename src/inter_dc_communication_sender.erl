@@ -52,17 +52,10 @@
 %% Returns ok if all DCs have acknowledged with in the time TIMEOUT
 -spec propagate_sync(term(), [dc_address()]) -> ok.
 propagate_sync(Message, DCs) ->
-<<<<<<< HEAD
-    Errors = lists:foldl(
-               fun({_DcId, {DcAddress, Port}}, Acc) ->
-                       case inter_dc_communication_sender:start_link(
-                              Port, DcAddress, Message, self()) of
-=======
     FailedDCs = lists:foldl(
                fun({DcId, {DcAddress, Port}}, Acc) ->
                        case inter_dc_communication_sender_fsm_sup:start_fsm(
                               [Port, DcAddress, Message, self()]) of
->>>>>>> master
                            {ok, _} ->
                                receive
                                    {done, normal} ->
@@ -109,29 +102,17 @@ init([Port,Host,Message,ReplyTo]) ->
 
 connect(timeout, State=#state{port=Port,host=Host,message=Message}) ->
     case  gen_tcp:connect(Host, Port,
-<<<<<<< HEAD
                           [{active,once}, binary, {packet,2}], ?CONNECT_TIMEOUT) of
-=======
-                          [{active,once}, binary, {packet,4}], ?CONNECT_TIMEOUT) of
->>>>>>> master
         {ok, Socket} ->
             ok = gen_tcp:send(Socket, term_to_binary(Message)),
             {next_state, wait_for_ack, State#state{socket=Socket},?CONNECT_TIMEOUT};
         {error, Reason} ->
             lager:error("Couldnot connect to remote DC: ~p", [Reason]),
-<<<<<<< HEAD
-            {stop, normal, State}
-    end.
-
-wait_for_ack(acknowledge, State)->
-    {next_state, stop, State,0};
-=======
             {stop, normal, State#state{reason=Reason}}
     end.
 
 wait_for_ack(acknowledge, State)->
     {next_state, stop, State#state{reason=normal},0};
->>>>>>> master
 
 wait_for_ack(timeout, State) ->
     %%TODO: Retry if needed

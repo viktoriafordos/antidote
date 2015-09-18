@@ -62,18 +62,13 @@ receive_message(timeout, State=#state{socket=Socket}) ->
             case binary_to_term(Message) of
                 {replicate, Updates} ->
                     ok =  inter_dc_recvr_vnode:store_updates(Updates) ,
-<<<<<<< HEAD
-                    ok = gen_tcp:send(Socket, term_to_binary(acknowledge));
-                Unknown ->
-=======
                     case gen_tcp:send(Socket, term_to_binary(acknowledge)) of
-			ok ->
-			    ok;
-			{error,Reason} ->
-			    lager:error("Could not send ack, reason ~p", [Reason])
-		    end;
+			            ok ->
+			                ok;
+			            {error,Reason} ->
+			                lager:error("Could not send ack, reason ~p", [Reason])
+		            end;
                 Unknown -> %% Add more messages to be handled
->>>>>>> master
                     lager:error("Weird message received ~p", [Unknown])
             end;
         {error, Reason} ->

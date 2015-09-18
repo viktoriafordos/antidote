@@ -22,11 +22,7 @@
 -behaviour(supervisor).
 
 %% API
-<<<<<<< HEAD
--export([start_link/0, start_rep/2]).
-=======
 -export([start_link/0, start_rep/2, stop_rep/0]).
->>>>>>> master
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -125,10 +121,6 @@ init(_Args) ->
        InterDcRecvrMaster,
        InterDcManager,
        VectorClockMaster,
-<<<<<<< HEAD
+       InterDcSenderSup,
        MaterializerMaster,
        BCounterManager]}}.
-=======
-       InterDcSenderSup,
-       MaterializerMaster]}}.
->>>>>>> master

@@ -45,12 +45,9 @@
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-<<<<<<< HEAD
-=======
 %% Starts listening to TCP port for incomming requests from other DCs
 %% Returns the address of the DC, which could be used by others to communicate
 -spec start_receiver(port()) -> {ok, dc_address()}.
->>>>>>> master
 start_receiver(Port) ->
     gen_server:call(?MODULE, {start_receiver, Port}, infinity).
 
@@ -86,15 +83,12 @@ handle_call({start_receiver, Port}, _From, State) ->
     receive
         ready -> {reply, {ok, my_dc(Port)}, State#state{port=Port}}
     end;
-<<<<<<< HEAD
-=======
 
 handle_call({stop_receiver}, _From, State) ->
     case antidote_sup:stop_rep() of
         ok -> 
             {reply, ok, State#state{port=0}}
     end;
->>>>>>> master
 
 handle_call(get_dcs, _From, #state{dcs=DCs} = State) ->
     {reply, {ok, DCs}, State};
@@ -132,8 +126,4 @@ add_dc({DcId, DcAddress}, DCs) ->
     orddict:store(DcId, DcAddress, DCs).
 
 add_dcs(OtherDCs, DCs) ->
-<<<<<<< HEAD
     lists:foldl(fun add_dc/2, DCs, OtherDCs).
-=======
-    lists:foldl(fun add_dc/2, DCs, OtherDCs).
->>>>>>> master
