@@ -445,25 +445,26 @@ prepare(Transaction, TxWriteSet, CommittedTx, ActiveTxPerKey, PreparedTx, Prepar
 set_prepared(_PreparedTx,[],_TxId,_Time,Acc) ->
     Acc;
 set_prepared(PreparedTx,[{Key, _Type, {_Op, _Actor}} | Rest],TxId,Time,Acc) ->
-    ActiveTxs = case ets:lookup(PreparedTx, Key) of
-		    [] ->
-			[];
-		    [{Key, List}] ->
-			List
-		end,
-    case lists:keymember(TxId, 1, ActiveTxs) of
-	true ->
-	    set_prepared(PreparedTx,Rest,TxId,Time,Acc);
-	false ->	
-	    true = ets:insert(PreparedTx, {Key, [{TxId, Time}|ActiveTxs]}),
-	    set_prepared(PreparedTx,Rest,TxId,Time,dict:append_list(Key,ActiveTxs,Acc))
-    end.
+    AList = case ets:lookup(PreparedTx, Key) of
+		[] ->
+		    true = ets:insert(PreparedTx, {Key, [{TxId, Time}]}),
+		    [];
+		[{Key, List}] ->
+		    case lists:keymember(TxId, 1, List) of
+			true ->
+			    set_prepared(PreparedTx,Rest,TxId,Time,Acc);
+			false ->	
+			    true = ets:update_element(PreparedTx, Key, {2, [{TxId, Time}|List]})
+		    end,
+		    List
+	    end,
+    set_prepared(PreparedTx,Rest,TxId,Time,dict:append_list(Key,AList,Acc)).
 
 reset_prepared(_PreparedTx,[],_TxId,_Time,_ActiveTxs) ->
     ok;
 reset_prepared(PreparedTx,[{Key, _Type, {_Op, _Actor}} | Rest],TxId,Time,ActiveTxs) ->
     %% Could do this more efficiently in case of multiple updates to the same key
-    true = ets:insert(PreparedTx, {Key, [{TxId, Time}|dict:fetch(Key,ActiveTxs)]}), 
+    true = ets:update_element(PreparedTx, Key, {2, [{TxId, Time}|dict:fetch(Key,ActiveTxs)]}), 
     reset_prepared(PreparedTx,Rest,TxId,Time,ActiveTxs).
 
 
