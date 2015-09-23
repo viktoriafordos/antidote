@@ -39,13 +39,10 @@ confirm() ->
     rt:wait_until_ring_converged(Nodes),
     Node = hd(Nodes),
     rt:wait_for_service(Node, antidote),
-<<<<<<< HEAD
-=======
 
     lager:info("Waiting until vnodes are started up"),
     rt:wait_until(Node,fun wait_init:check_ready/1),
     lager:info("Vnodes are started up"),
->>>>>>> master
 
     pass = start_stop_test(),
     pass = get_empty_crdt_test(<<"key0">>),
