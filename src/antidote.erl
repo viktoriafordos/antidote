@@ -83,11 +83,54 @@ clocksi_execute_tx(Clock, Operations) ->
 
 -spec clocksi_execute_tx(Operations::[any()]) -> term().
 clocksi_execute_tx(Operations) ->
-    {ok, _} = clocksi_static_tx_coord_sup:start_fsm([self(), Operations]),
-    receive
-        EndOfTx ->
-            EndOfTx
-    end.
+	LN = node(),
+	case LN of
+		'dev1@127.0.0.1' ->
+			{ok, _} = clocksi_static_tx_coord_sup:start_fsm([self(), Operations]),
+			receive
+				EndOfTx ->
+					EndOfTx
+			end;
+		_ -> 
+			Phase = rpc:call('dev1@127.0.0.1', commander, get_phase, []),
+			%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+			%%% Replay
+			%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+			case Phase of
+				replay ->
+					%% Send a replay request to the Commander and wait for a command to continue
+					skip;
+				record ->
+					skip
+			end,
+			%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+			{ok, _} = clocksi_static_tx_coord_sup:start_fsm([self(), Operations]),
+			receive
+				EndOfTx ->
+					case Phase of
+						%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+						%%% Replay
+						%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+						replay ->
+							%%Acknowledge the commander for the done transaction in Replay phase
+							skip;
+						%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+						
+						%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+						%%% Record
+						%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+						record ->
+							LDC = dc_utilities:get_my_dc_id(),
+							Node = {partition, LN},
+							{ok, Tx_info} = EndOfTx,
+							Msg = {LDC, Node, {Tx_info, Operations}, local},
+							rpc:call('dev1@127.0.0.1', commander, process_request, [record, Msg])
+							
+						%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+					end,
+					EndOfTx
+			end
+		end.
 
 %% @doc Starts a new ClockSI interactive transaction.
 %%      Input:

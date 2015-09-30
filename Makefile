@@ -34,8 +34,8 @@ currentdevrel: stagedevrel compile-riak-test
 
 riak-test: currentdevrel
 	$(foreach dep,$(wildcard riak_test/*.erl), ../riak_test/riak_test -v -c antidote -t $(dep);)
-
-my-test: 
+	
+wallet-test: 
 	$(REBAR) skip_deps=true riak_test_compile
 	../riak_test/riak_test -v -c antidote -t wallet_multiple_dcs1_test
 
@@ -52,7 +52,7 @@ my-test:
 
 .PHONY : stagedevrel devrel
 
-DEVNODES ?= 6
+DEVNODES ?= 3
 
 # 'seq' is not available on all *BSD, so using an alternate in awk
 SEQ = $(shell awk 'BEGIN { for (i = 1; i < '$(DEVNODES)'; i++) printf("%i ", i); print i ;exit(0);}')

@@ -120,38 +120,113 @@ check_and_update(SnapshotTime, Localclock, Transaction,
             end,
     case check_dep(SnapshotTime, Localclock) of
         true ->
-            lists:foreach(
-              fun(Op) ->
-                      Logrecord = Op#operation.payload,
-                      case Logrecord#log_record.op_type of
-                          noop ->
-                              lager:debug("Heartbeat Received");
-                          update ->
-                              logging_vnode:append(Node, LogId, Logrecord);
-                          _ -> %% prepare or commit
-                              logging_vnode:append(Node, LogId, Logrecord),
-                              lager:debug("Prepare/Commit record")
-                              %%TODO Write this to log
-                      end
-              end, Ops),
-            DownOps =
-                clocksi_transaction_reader:get_update_ops_from_transaction(
-                  Transaction),
-            lists:foreach( fun(DownOp) ->
-                                   Key = DownOp#clocksi_payload.key,
-                                   ok = materializer_vnode:update(Key, DownOp)
-                           end, DownOps),
-            lager:debug("Update from remote DC applied:",[payload]),
-            %%TODO add error handling if append failed
-            {ok, NewState} = finish_update_dc(
-                               Dc, DcQ, Ts, StateData),
-            ok = vectorclock:update_clock(Partition, Dc, Ts),
-            riak_core_vnode_master:command(
-              {Partition,node()}, calculate_stable_snapshot,
-              vectorclock_vnode_master),
-            riak_core_vnode_master:command({Partition, node()}, {process_queue},
-                                           inter_dc_recvr_vnode_master),
-            NewState;
+			LN = node(),
+			case LN of 
+				'dev1@127.0.0.1' ->
+					lists:foreach(
+					  fun(Op) ->
+							  Logrecord = Op#operation.payload,
+							  case Logrecord#log_record.op_type of
+								  noop ->
+									  lager:debug("Heartbeat Received");
+								  update ->
+									  logging_vnode:append(Node, LogId, Logrecord);
+								  _ -> %% prepare or commit
+									  logging_vnode:append(Node, LogId, Logrecord),
+									  lager:debug("Prepare/Commit record")
+									  %%TODO Write this to log
+							  end
+					  end, Ops),
+					DownOps =
+						clocksi_transaction_reader:get_update_ops_from_transaction(
+						  Transaction),
+					lists:foreach( fun(DownOp) ->
+										   Key = DownOp#clocksi_payload.key,
+										   ok = materializer_vnode:update(Key, DownOp)
+								   end, DownOps),
+					lager:debug("Update from remote DC applied:",[payload]),
+
+					%%TODO add error handling if append failed
+					{ok, NewState} = finish_update_dc(
+									   Dc, DcQ, Ts, StateData),
+					ok = vectorclock:update_clock(Partition, Dc, Ts),
+					riak_core_vnode_master:command(
+					  {Partition,node()}, calculate_stable_snapshot,
+					  vectorclock_vnode_master),
+					riak_core_vnode_master:command({Partition, node()}, {process_queue},
+												   inter_dc_recvr_vnode_master),
+					NewState;					   
+				_ ->
+					Phase = rpc:call('dev1@127.0.0.1', commander, get_phase, []),
+					%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+					%%% Replay phase: replay and record
+					%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+					case Phase of
+						replay ->
+							%% Send a replay request to the Commander and wait for a command to continue
+							skip;
+						record ->
+							skip
+					end,
+					%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+					lists:foreach(
+					  fun(Op) ->
+							  Logrecord = Op#operation.payload,
+							  case Logrecord#log_record.op_type of
+								  noop ->
+									  lager:debug("Heartbeat Received");
+								  update ->
+									  logging_vnode:append(Node, LogId, Logrecord);
+								  _ -> %% prepare or commit
+									  logging_vnode:append(Node, LogId, Logrecord),
+									  lager:debug("Prepare/Commit record")
+									  %%TODO Write this to log
+							  end
+					  end, Ops),
+					DownOps =
+						clocksi_transaction_reader:get_update_ops_from_transaction(
+						  Transaction),
+					lists:foreach( fun(DownOp) ->
+										   Key = DownOp#clocksi_payload.key,
+										   ok = materializer_vnode:update(Key, DownOp)
+								   end, DownOps),
+					lager:debug("Update from remote DC applied:",[payload]),
+
+					%%TODO add error handling if append failed
+					{ok, NewState} = finish_update_dc(
+									   Dc, DcQ, Ts, StateData),
+					ok = vectorclock:update_clock(Partition, Dc, Ts),
+					riak_core_vnode_master:command(
+					  {Partition,node()}, calculate_stable_snapshot,
+					  vectorclock_vnode_master),
+					riak_core_vnode_master:command({Partition, node()}, {process_queue},
+												   inter_dc_recvr_vnode_master),
+				
+					case Phase of			
+						%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+						%%% Record phase
+						%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+						record ->
+							LDC = dc_utilities:get_my_dc_id(),
+							case Transaction of 
+								{0, _, _, _} ->
+									skip;
+								{{tx_id, _, _}, _, _, _} ->
+									Msg = {LDC, {Partition, LN}, Transaction, remote},
+									rpc:call('dev1@127.0.0.1', commander, process_request, [record, Msg])
+							end;
+						%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+							
+						%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+						%%% Replay
+						%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+						replay ->
+							%%Acknowledge the commander for the done transaction in Replay phase
+							skip
+						%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+					end,
+					NewState
+			end;	
         false ->
             lager:debug("Dep not satisfied ~p", [Transaction]),
             StateData

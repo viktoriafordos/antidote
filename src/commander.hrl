@@ -1,0 +1,1 @@
+-record(state, {phase, device, events, waiting_requests, processing_event, tx_mapping}).

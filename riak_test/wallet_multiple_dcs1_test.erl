@@ -1,17 +1,14 @@
 -module(wallet_multiple_dcs1_test).
 
--export([confirm/0, multiple_credits/4]).
-%%, parallel_credit_test/3]).
+-export([confirm/0, multiple_credits1/4, multiple_credits2/4]).
 
 -include_lib("eunit/include/eunit.hrl").
 
 -define(HARNESS, (rt_config:get(rt_harness))).
-
-	%% TODO: update my_wallet functions to return an appropriate result,
-	%% e.g., getbalance returns the value,
-	%% e.g., credit and debit return {ok, commit_time()}
 	
 confirm() ->
+	%% TODO: get this from command line
+	Phase = record, %% replay
 	[Cluster1, Cluster2, Cluster3] = rt:build_clusters([1,1,1]),
 	HeadCluster1 = hd(Cluster1),
 	HeadCluster2 = hd(Cluster2),
@@ -34,49 +31,41 @@ confirm() ->
 	ok = rpc:call(HeadCluster1, inter_dc_manager, add_list_dcs,[[DC2, DC3]]),
 	ok = rpc:call(HeadCluster2, inter_dc_manager, add_list_dcs,[[DC1, DC3]]),
 	ok = rpc:call(HeadCluster3, inter_dc_manager, add_list_dcs,[[DC1, DC2]]),
-   
-    AllNodes = nodes(),
-    lager:info("########Cluster Nodes: ~p#########~n", [AllNodes]),
+     
+    {ok, _} = rpc:call(HeadCluster1, commander, start_link, [Phase]),
+
+    PPP = rpc:call(HeadCluster1, commander, get_phase, []),
+    lager:info("~ncommander_srv started in phase ~p~n",[PPP]),
     
-    %% Add intercept for finish_updtae_dc
-    Intercept = {inter_dc_repl_update, [{{finish_update_dc, 4}, finish_update_dc_intrcptd}]},
-    [ok = rt_intercept:add(Node, Intercept) || Node <- AllNodes],
-    
-	parallel_credit_test(Cluster1, Cluster2, Cluster3),
+	parallel_credit_test(Cluster2, Cluster3),
 	
 	pass.
  
-parallel_credit_test(Cluster1, Cluster2, Cluster3) ->
-	Node1 = hd(Cluster1),
+parallel_credit_test(Cluster2, Cluster3) ->
 	Node2 = hd(Cluster2),
 	Node3 = hd(Cluster3),
 	Key = parkey,
 	Pid = self(),
-	Quiescent_Balance = 2550,
+	Quiescent_Balance = 900,
 	
-	spawn(?MODULE, multiple_credits, [Node1, Key, node1, Pid]),
-	spawn(?MODULE, multiple_credits, [Node2, Key, node2, Pid]),
-	spawn(?MODULE, multiple_credits, [Node3, Key, node3, Pid]),
+	P = rpc:call('dev1@127.0.0.1', commander, get_phase, []),
+	lager:info("00000000======00000000~n~p~n", [P]),
 	
+	CreditRes = my_walletapp1:credit(Node2, Key, 200, node2),
+	?assertMatch({ok, _}, CreditRes),
+	
+	
+	spawn(?MODULE, multiple_credits1, [Node2, Key, node2, Pid]),
+	spawn(?MODULE, multiple_credits2, [Node3, Key, node3, Pid]),
 	%%Wait until multiple_credits in all nodes executes and sends the commit time
 	Result = receive
-	    {ok, CT1} ->
-		receive
-		    {ok, CT2} ->
-			receive
+	 {ok, CT2} ->
+		    receive
 			    {ok, CT3} ->
-				%%Get the maximum commit time, read values corresponding max CT 
-				Time = dict:merge(fun(_K, T1, T2)->
-				 			max(T1, T2)
-						  end,
-						  CT3, dict:merge(fun(_K, T1, T2) ->
+				Time = dict:merge(fun(_K, T1, T2) ->
 									max(T1, T2)
 								  end,
-								  CT1, CT2)),
-				ReadRes1 = my_walletapp1:getbalance(Node1, Key, Time),
-				{ok, {_,[ReadVal1],_}} = ReadRes1,
-				?assertEqual(Quiescent_Balance, ReadVal1),
-				
+								  CT3, CT2),
 				ReadRes2 = my_walletapp1:getbalance(Node2, Key, Time),
 				{ok, {_,[ReadVal2],_}} = ReadRes2,
 				?assertEqual(Quiescent_Balance, ReadVal2),
@@ -87,26 +76,27 @@ parallel_credit_test(Cluster1, Cluster2, Cluster3) ->
 				lager:info("Parallel credits and debits passed!"),
 				pass
 			end
-		end
+		%%end
 	end,
 	?assertEqual(Result, pass),
 	pass.
+
+multiple_credits1(Node, Key, Actor, ReplyTo) ->	
+	CreditRes1 = my_walletapp1:credit(Node, Key, 600, Actor),
+	?assertMatch({ok, _}, CreditRes1),
+
+	DebitRes2 = my_walletapp1:debit(Node, Key, 200, Actor),
+	?assertMatch({ok, _}, DebitRes2),
 	
-multiple_credits(Node, Key, Actor, ReplyTo) ->
+	{ok, {_,_,CommitTime}} = DebitRes2,
+	ReplyTo ! {ok, CommitTime}.
+	
+multiple_credits2(Node, Key, Actor, ReplyTo) ->
 	CreditRes1 = my_walletapp1:credit(Node, Key, 500, Actor),
 	?assertMatch({ok, _}, CreditRes1),
-		
-	CreditRes2 = my_walletapp1:credit(Node, Key, 400, Actor),
-	?assertMatch({ok, _}, CreditRes2),
 	
-	CreditRes3 = my_walletapp1:credit(Node, Key, 300, Actor),
-	?assertMatch({ok, _}, CreditRes3),
+	DebitRes1 = my_walletapp1:debit(Node, Key, 200, Actor),
+	?assertMatch({ok, _}, DebitRes1),
 	
-	DebitRes4 = my_walletapp1:debit(Node, Key, 150, Actor),
-	?assertMatch({ok, _}, DebitRes4),
-	
-	DebitRes5 = my_walletapp1:debit(Node, Key, 200, Actor),
-	?assertMatch({ok, _}, DebitRes5),
-	
-	{ok, {_,_,CommitTime}} = DebitRes5,
+	{ok, {_,_,CommitTime}} = DebitRes1,
 	ReplyTo ! {ok, CommitTime}.
