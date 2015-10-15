@@ -106,7 +106,7 @@ value(Counter) -> Counter.
 %% and the third parameter is a `bcounter()' which holds the current snapshot.
 %%
 %% Return a tuple containing the operation and source replica.
-%% This operation fails and returns `{error, no_permissions}'
+%% This operation fails and returns `{error, {no_permissions, {id(), pos_integer()}}'
 %% if it tries to consume resources unavailable to the source replica
 %% (which prevents logging of forbidden attempts).
 -spec generate_downstream(bcounter_anon_op(), _, bcounter()) ->
@@ -189,11 +189,11 @@ is_operation(Operation) ->
 %% EUnit tests
 %% ===================================================================
 
--ifdef(UNDEFINED).
+-ifdef(TEST).
 
 %% Utility to generate and apply downstream operations.
 apply_op(Op, Actor, Counter) ->
-    {ok, OP_DS} = generate_downstream(Op, Actor, Counter),
+    {ok, OP_DS} = generate_downstream_id(Op, Actor, Counter),
     {ok, NewCounter} = update(OP_DS, Counter),
     NewCounter.
 
@@ -231,8 +231,8 @@ decrement_test() ->
     %% Test nonexistent replica.
     ?assertEqual(0, localPermissions(r2,Counter1)),
     %% Test forbidden decrement.
-    OP_DS = generate_downstream({decrement, 6}, r1, Counter2),
-    ?assertEqual({error,{no_permissions, 2}}, OP_DS).
+    OP_DS = generate_downstream_id({decrement, 6}, r1, Counter2),
+    ?assertEqual({error,{no_permissions, {r1,6}}}, OP_DS).
 
 %% Tests a more complex chain of increment and decrement operations.
 decrement_increment_test() ->
@@ -243,8 +243,8 @@ decrement_increment_test() ->
     %% Test several replicas (balance each other).
     ?assertEqual(10, permissions(Counter3)),
     %% Test forbidden permissions, when total is higher than consumed.
-    OP_DS = generate_downstream({decrement, 6}, r1, Counter3),
-    ?assertEqual({error,{no_permissions, 6}}, OP_DS),
+    OP_DS = generate_downstream_id({decrement, 6}, r1, Counter3),
+    ?assertEqual({error,{no_permissions, {r1,6}}}, OP_DS),
     %% Test the same operation is allowed on another replica with enough permissions.
     Counter4 = apply_op({decrement, 6}, r2, Counter3),
     ?assertEqual(4, permissions(Counter4)).
@@ -259,8 +259,8 @@ transfer_test() ->
     ?assertEqual(6, localPermissions(r2,Counter2)),
     ?assertEqual(10, permissions(Counter2)),
     %% Test transference forbidden by lack of previously transfered resources.
-    OP_DS = generate_downstream({transfer, 5, r2}, r1, Counter2),
-    ?assertEqual({error,{no_permissions, 5}, OP_DS),
+    OP_DS = generate_downstream_id({transfer, 5, r2}, r1, Counter2),
+    ?assertEqual({error,{no_permissions, {r1,5}}}, OP_DS),
     %% Test transference enabled by previously transfered resources.
     Counter3 = apply_op({transfer, 5, r1}, r2, Counter2),
     ?assertEqual(9, localPermissions(r1,Counter3)),
