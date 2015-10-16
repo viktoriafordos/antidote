@@ -18,6 +18,7 @@
 -export([new/0,
          localPermissions/2,
          permissions/1,
+         permissions_per_owner/1,
          value/1,
          generate_downstream/3,
          update/2,
@@ -93,6 +94,15 @@ permissions({P,D}) ->
                                 V + Acc
                         end, 0, D),
     TotalIncrements - TotalDecrements.
+
+%% @doc Return available permissions for each `id()' in a `bcounter()'.
+-spec permissions_per_owner(bcounter()) -> dict().
+permissions_per_owner({_,D}=C) ->
+    orddict:fold(
+      fun
+          (Id,_,AccMap) ->
+              orddict:store(Id, localPermissions(Id,C), AccMap)
+      end, orddict:new(), D).
 
 %% @doc Return the read value of a given `bcounter()', itself.
 -spec value(bcounter()) -> bcounter().
