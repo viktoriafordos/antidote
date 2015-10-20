@@ -39,9 +39,9 @@ confirm() ->
     ok = rpc:call(HeadCluster2, inter_dc_manager, add_list_dcs,[[DC1, DC3]]),
     ok = rpc:call(HeadCluster3, inter_dc_manager, add_list_dcs,[[DC1, DC2]]),
 
-    transfer_test(key2, HeadCluster1, HeadCluster2),
     new_bcounter_test(key1, HeadCluster1),
     read_increment_at_dc_test(key1, HeadCluster2),
+    transfer_test(key2, HeadCluster1, HeadCluster2),
     pass.
 
 
@@ -66,7 +66,6 @@ read_increment_at_dc_test(Key, Node) ->
                       [Key, Type, {{increment, 10}, a}]),
     ?assertMatch({ok, _}, Result),
     {ok,{_,_,CommitTime}} = Result,
-    lager:info("Commit time ~p",[CommitTime]),
     Read1 = rpc:call(Node, antidote, clocksi_read, [CommitTime, Key, Type]),
     {ok, {_,[Counter1],_}} = Read1,
     ?assertEqual(ReadValue + 10, crdt_bcounter:permissions(Counter1)).
@@ -75,34 +74,41 @@ transfer_test(Key, Node1, Node2) ->
     lager:info("transfer_test started"),
     Type = crdt_bcounter,
     Result0 = rpc:call(Node2, antidote, append,
-                      [Key, Type, {{increment, 10}, a}]),
+                      [Key, Type, {{increment, 10}, b}]),
     ?assertMatch({ok, _}, Result0),
-    {ok,{_,_,CommitTime0}}=Result0,
+    {ok, {_,_,_}} = Result0,
 
-    rpc:call(Node2, antidote, read, [Key, Type]),
+    Result1 = rpc:call(Node1, antidote, append,
+                      [Key, Type, {{increment, 1}, a}]),
+    ?assertMatch({ok, _}, Result1),
+    {ok,{_,_,CommitTime1}} = Result1,
 
-    Read0 = rpc:call(Node1, antidote, clocksi_read, [CommitTime0, Key, Type]),
+    Read0 = rpc:call(Node2, antidote, clocksi_read, [CommitTime1, Key, Type]),
     {ok, {_,[Counter0],_}} = Read0,
 
     Id1 = get_node_id_from_node_name(Node1, Counter0),
 
     Result = rpc:call(Node2, antidote, append,
-                      [Key, Type, {{transfer, 2, a}, Id1}]),
+                      [Key, Type, {{transfer, 2, Id1}, b}]),
     ?assertMatch({ok, _}, Result),
-    {ok, {_, [Counter1], CommitTime1}} = Result,
+    {ok, {_, _, CommitTime2}} = Result,
 
-    Read1 = rpc:call(Node1, antidote, clocksi_read, [CommitTime1, Key, Type]),
-    {ok, {_,Counter1,_}} = Read1,
-    ?assertEqual(2,
-                 crdt_bcounter:local_permissions(Id1, Counter1)).
+    Read1 = rpc:call(Node1, antidote, clocksi_read, [CommitTime2, Key, Type]),
+    {ok, {_,[Counter1],_}} = Read1,
 
+    Id2 = get_node_id_from_node_name(Node2, Counter1),
 
-get_node_id_from_node_name(NodeName, {_,D}) ->
+    ?assertEqual(3,
+                 crdt_bcounter:local_permissions(Id1, Counter1)),
+    ?assertEqual(8,
+                 crdt_bcounter:local_permissions(Id2, Counter1)).
+
+get_node_id_from_node_name(SearchName, {_,D}) ->
     orddict:fold(
-     fun({NodeId, _}, _, _) ->
-        case NodeId of
-            NodeName -> NodeId;
-            _ -> nil
+     fun({NodeName, _}=NodeId, _, In) ->
+        case NodeName of
+            SearchName -> NodeId;
+            _ -> In
         end
      end, nil, D).
 

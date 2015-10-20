@@ -72,10 +72,6 @@ increment_test(Nodes) ->
     {ok, Counter1} = Result1,
     ?assertEqual(10, crdt_bcounter:permissions(Counter1)),
 
-    %Cannot test local permissions on client-side, because it does not know the id of the server.
-    %?assertEqual(10, crdt_bcounter:localPermissions(r1,Counter1)),
-    %?assertEqual(0, crdt_bcounter:localPermissions(r2,Counter1)),
-
     %% Test bulk transaction with read and write operations.
     Result2 = rpc:call(SecondNode, antidote, clocksi_execute_tx,
                        [[{update, {Key, Type, {{increment, 7}, b}}}, {update, {Key, Type, {{increment, 5}, b}}}, {read, {Key, Type}}]]),
