@@ -8,7 +8,7 @@
 %% @doc
 %% An operation based implementation of the bounded counter CRDT.
 %% This counter is able to maintain a non-negative value by
-%% explicitly exchanging permissions to execute decrement operations. 
+%% explicitly exchanging permissions to execute decrement operations.
 %% All operations on this CRDT are monotonic and do not keep extra tombstones.
 %% @end
 
@@ -16,14 +16,15 @@
 
 %% API
 -export([new/0,
-    localPermissions/2,
-    permissions/1,
-    value/1,
-    generate_downstream/3,
-    update/2,
-    to_binary/1,
-    from_binary/1, 
-    is_operation/1]).
+         localPermissions/2,
+         permissions/1,
+         permissions_per_owner/1,
+         value/1,
+         generate_downstream/3,
+         update/2,
+         to_binary/1,
+         from_binary/1,
+         is_operation/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -31,13 +32,13 @@
 
 -export_type([bcounter/0, binary_bcounter/0, bcounter_op/0, id/0]).
 
--opaque bcounter() :: {orddict:orddict(),orddict:orddict()}.
+-type bcounter() :: {orddict:orddict(),orddict:orddict()}.
 -type binary_bcounter() :: binary().
 -type bcounter_op() :: bcounter_anon_op() | bcounter_src_op().
--type bcounter_anon_op() :: {transfer, pos_integer(), id()} | 
-    {increment, pos_integer()} | {decrement, pos_integer()}.
+-type bcounter_anon_op() :: {transfer, pos_integer(), id()} |
+{increment, pos_integer()} | {decrement, pos_integer()}.
 -type bcounter_src_op() :: {bcounter_anon_op(), id()}.
--opaque id() :: term. %% A replica's identifier.
+-type id() :: undefined | {_,_}. %% A replica's identifier.
 
 %% @doc Return a new, empty `bcounter()'.
 -spec new() -> bcounter().
@@ -46,46 +47,46 @@ new() ->
 
 %% @doc Return the available permissions of replica `Id' in a `bcounter()'.
 -spec localPermissions(id(),bcounter()) -> non_neg_integer().
-localPermissions(Id,{P,D}) -> 
+localPermissions(Id,{P,D}) ->
     Received = lists:foldl(
                  fun(
                    {_,V},Acc) ->
-                         Acc + V 
+                         Acc + V
                  end,
                  0, orddict:filter(
                       fun(
                         {_,To},_) when To == Id ->
-                              true; 
+                              true;
                          (_,_) ->
-                              false 
+                              false
                       end, P)),
     Granted  = lists:foldl(
                  fun
                      ({_,V},Acc) ->
-                         Acc + V 
+                         Acc + V
                  end, 0, orddict:filter(
                            fun
                                ({From,To},_) when From == Id andalso To /= Id ->
                                    true;
                                (_,_) ->
-                                   false 
+                                   false
                            end, P)),
     case orddict:find(Id,D) of
-        {ok, Decrements} -> 
+        {ok, Decrements} ->
             Received - Granted - Decrements;
-        error -> 
+        error ->
             Received - Granted
     end.
 
 %% @doc Return the total available permissions in a `bcounter()'.
 -spec permissions(bcounter()) -> non_neg_integer().
-permissions({P,D}) -> 
+permissions({P,D}) ->
     TotalIncrements = orddict:fold(
                         fun
                             ({K,K},V,Acc) ->
-                                V + Acc; 
+                                V + Acc;
                             (_,_,Acc) ->
-                                Acc 
+                                Acc
                         end, 0, P),
     TotalDecrements = orddict:fold(
                         fun
@@ -93,6 +94,15 @@ permissions({P,D}) ->
                                 V + Acc
                         end, 0, D),
     TotalIncrements - TotalDecrements.
+
+%% @doc Return available permissions for each `id()' in a `bcounter()'.
+-spec permissions_per_owner(bcounter()) -> dict().
+permissions_per_owner({_,D}=C) ->
+    orddict:fold(
+      fun
+          (Id,_,AccMap) ->
+              orddict:store(Id, localPermissions(Id,C), AccMap)
+      end, orddict:new(), D).
 
 %% @doc Return the read value of a given `bcounter()', itself.
 -spec value(bcounter()) -> bcounter().
@@ -106,28 +116,32 @@ value(Counter) -> Counter.
 %% and the third parameter is a `bcounter()' which holds the current snapshot.
 %%
 %% Return a tuple containing the operation and source replica.
-%% This operation fails and returns `{error, no_permissions}'
+%% This operation fails and returns `{error, {no_permissions, {id(), pos_integer()}}'
 %% if it tries to consume resources unavailable to the source replica
 %% (which prevents logging of forbidden attempts).
--spec generate_downstream(bcounter_op(), riak_dt:actor(), bcounter()) -> {ok, bcounter_op()} | {error, no_permissions}.
-generate_downstream({increment,V}, Actor, _Counter) when is_integer(V), V > 0 ->
-    {ok, {{increment,V},Actor}};
-generate_downstream({decrement,V}, Actor, Counter) when is_integer(V), V > 0 ->
-    generate_downstream_check({decrement,V}, Actor, Counter, V);
-generate_downstream({transfer,V,To}, Actor, Counter) when is_integer(V), V > 0 ->
-    generate_downstream_check({transfer,V,To}, Actor, Counter, V).
+-spec generate_downstream(bcounter_anon_op(), _, bcounter()) ->
+    {ok, bcounter_src_op()} | {error, {no_permissions, {id(),pos_integer()}}}.
+generate_downstream(Op, _Actor, Counter) ->
+    generate_downstream_id(Op, dc_utilities:get_my_dc_id(), Counter).
 
-generate_downstream_check(Op, Actor, Counter, V) ->
-    Available = localPermissions(Actor, Counter),
-    if  Available >= V -> {ok, {Op,Actor}};
-        Available <  V -> {error, no_permissions}
+generate_downstream_id({increment,V}, Id, _Counter) when is_integer(V), V > 0 ->
+    {ok, {{increment,V},Id}};
+generate_downstream_id({decrement,V}, Id, Counter) when is_integer(V), V > 0 ->
+    generate_downstream_check({decrement,V}, Id, Counter, V);
+generate_downstream_id({transfer,V,To}, Id, Counter) when is_integer(V), V > 0 ->
+    generate_downstream_check({transfer,V,To}, Id, Counter, V).
+
+generate_downstream_check(Op, Id, Counter, V) ->
+    Available = localPermissions(Id, Counter),
+    if  Available >= V -> {ok, {Op,Id}};
+        Available <  V -> {error, {no_permissions, {Id,V}}}
     end.
 
 %% @doc Update a `bcounter()' with a downstream operation,
 %% usually created with `generate_downstream'.
 %%
 %% Return the resulting `bcounter()' after applying the operation.
--spec update(bcounter_op(), bcounter()) -> {ok, bcounter()}.
+-spec update(bcounter_src_op(), bcounter()) -> {ok, bcounter()}.
 update({{increment, V},Id}, Counter) ->
     increment(Id,V,Counter);
 update({{decrement, V},Id}, Counter) ->
@@ -136,16 +150,20 @@ update({{transfer, V,To},From}, Counter) ->
     transfer(From,To,V,Counter).
 
 %% Add a given amount of permissions to a replica.
-increment(Id,V,{P,D}) -> 
-    {ok,{orddict:update_counter({Id,Id},V,P),D}}.
+increment(Id,V,{P,D}) ->
+    NewP = orddict:update_counter({Id,Id},V,P),
+    NewD = orddict:update_counter(Id,0,D),
+    {ok,{NewP,NewD}}.
 
 %% Consume a given amount of permissions from a replica.
-decrement(Id,V,{P,D}) -> 
+decrement(Id,V,{P,D}) ->
     {ok, {P,orddict:update_counter(Id,V,D)}}.
 
 %% Transfer a given amount of permissions from one replica to another.
-transfer(From,To,V,{P,D}) -> 
-    {ok, {orddict:update_counter({From,To},V,P),D}}.
+transfer(From,To,V,{P,D}) ->
+    NewP = orddict:update_counter({From,To},V,P),
+    NewD = orddict:update_counter(To,0,D),
+    {ok, {NewP,NewD}}.
 
 %% doc Return the binary representation of a `bcounter()'.
 -spec to_binary(bcounter()) -> binary().
@@ -185,7 +203,7 @@ is_operation(Operation) ->
 
 %% Utility to generate and apply downstream operations.
 apply_op(Op, Actor, Counter) ->
-    {ok, OP_DS} = generate_downstream(Op, Actor, Counter),
+    {ok, OP_DS} = generate_downstream_id(Op, Actor, Counter),
     {ok, NewCounter} = update(OP_DS, Counter),
     NewCounter.
 
@@ -212,7 +230,7 @@ localPermisisons_test() ->
     ?assertEqual(10, localPermissions(r1,Counter1)),
     %% Test nonexistent replica.
     ?assertEqual(0, localPermissions(r2,Counter1)).
-    
+
 %% Tests decrement operations.
 decrement_test() ->
     Counter0 = new(),
@@ -223,8 +241,8 @@ decrement_test() ->
     %% Test nonexistent replica.
     ?assertEqual(0, localPermissions(r2,Counter1)),
     %% Test forbidden decrement.
-    OP_DS = generate_downstream({decrement, 6}, r1, Counter2),
-    ?assertEqual({error,no_permissions}, OP_DS).
+    OP_DS = generate_downstream_id({decrement, 6}, r1, Counter2),
+    ?assertEqual({error,{no_permissions, {r1,6}}}, OP_DS).
 
 %% Tests a more complex chain of increment and decrement operations.
 decrement_increment_test() ->
@@ -235,8 +253,8 @@ decrement_increment_test() ->
     %% Test several replicas (balance each other).
     ?assertEqual(10, permissions(Counter3)),
     %% Test forbidden permissions, when total is higher than consumed.
-    OP_DS = generate_downstream({decrement, 6}, r1, Counter3),
-    ?assertEqual({error,no_permissions}, OP_DS),
+    OP_DS = generate_downstream_id({decrement, 6}, r1, Counter3),
+    ?assertEqual({error,{no_permissions, {r1,6}}}, OP_DS),
     %% Test the same operation is allowed on another replica with enough permissions.
     Counter4 = apply_op({decrement, 6}, r2, Counter3),
     ?assertEqual(4, permissions(Counter4)).
@@ -251,8 +269,8 @@ transfer_test() ->
     ?assertEqual(6, localPermissions(r2,Counter2)),
     ?assertEqual(10, permissions(Counter2)),
     %% Test transference forbidden by lack of previously transfered resources.
-    OP_DS = generate_downstream({transfer, 5, r2}, r1, Counter2),
-    ?assertEqual({error,no_permissions}, OP_DS),
+    OP_DS = generate_downstream_id({transfer, 5, r2}, r1, Counter2),
+    ?assertEqual({error,{no_permissions, {r1,5}}}, OP_DS),
     %% Test transference enabled by previously transfered resources.
     Counter3 = apply_op({transfer, 5, r1}, r2, Counter2),
     ?assertEqual(9, localPermissions(r1,Counter3)),

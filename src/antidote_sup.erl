@@ -106,6 +106,10 @@ init(_Args) ->
                         {inter_dc_manager, start_link, []},
                         permanent, 5000, worker, [inter_dc_manager]},
 
+    BCounterManager = {bcounter_manager,
+                        {bcounter_manager, start_link, []},
+                        permanent, 5000, worker, [bcounter_manager]},
+
     {ok,
      {{one_for_one, 5, 10},
       [LoggingMaster,
@@ -118,4 +122,5 @@ init(_Args) ->
        InterDcManager,
        VectorClockMaster,
        InterDcSenderSup,
-       MaterializerMaster]}}.
+       MaterializerMaster,
+       BCounterManager]}}.
