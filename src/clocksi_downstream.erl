@@ -38,11 +38,19 @@ generate_downstream_op(Transaction, Node, Key, Type, Update, WriteSet) ->
         WriteSet) of
         {ok, Snapshot} ->
             TypeString = lists:flatten(io_lib:format("~p", [Type])),
+
             case string:str(TypeString, "riak_dt") of
                 0 -> %% dealing with an op_based crdt
                     case Type:generate_downstream(Op, Actor, Snapshot) of
                         {ok, OpParam} ->
                             {ok, {update, OpParam}};
+                        % Bounded Counter no permissions error.
+                        {error, {no_permissions, {Id,V}}} ->
+                            {_Index, Master} = Node,
+                            Time = Transaction#transaction.snapshot_time,
+                            bcounter_manager:request_permissions(
+                                Master, Key, Time, Snapshot, Id, V),
+                            {error, no_permissions};
                         {error, Reason} ->
                             {error, Reason}
                     end;

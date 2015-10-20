@@ -61,26 +61,26 @@ decrement_test(Cluster1, Cluster2, DC1, DC2) ->
     Key = bcounter,
     %% Test an allowed chain of operations.
     Result0 = rpc:call(Node1, antidote, clocksi_execute_tx, [[
-                                                              {update, Key, Type, {{increment, 7}, Id1}},
-                                                              {update, Key, Type, {{decrement, 2}, Id1}},
-                                                              {read, Key, Type}
+                                                              {update, {Key, Type, {{increment, 7}, Id1}}},
+                                                              {update, {Key, Type, {{decrement, 2}, Id1}}},
+                                                              {read, {Key, Type}}
                                                              ]]),
-    {ok,{_,_,VClock1}} = Result0,
-    lager:info("Done 1st transaction with VClock ~p", [VClock1]),
-    Result1 = rpc:call(Node2, antidote, clocksi_execute_tx, [VClock1, [
-                                                                       {update, Key, Type, {{increment, 5}, Id2}},
-                                                                       {update, Key, Type, {{decrement, 3}, Id2}},
-                                                                       {read, Key, Type}
+    {ok,{_,_,VClock0}} = Result0,
+    lager:info("Done 1st transaction with VClock ~p", [VClock0]),
+    Result1 = rpc:call(Node2, antidote, clocksi_execute_tx, [VClock0, [
+                                                                       {update, {Key, Type, {{increment, 5}, Id2}}},
+                                                                       {update, {Key, Type, {{decrement, 3}, Id2}}},
+                                                                       {read, {Key, Type}}
                                                                       ]]),
-    {ok, {_, [Counter1], VClock2}} = Result1,
-    lager:info("Done 2nd transaction with VClock ~p", [VClock2]),
+    {ok, {_, [Counter1], VClock1}} = Result1,
+    lager:info("Done 2nd transaction with VClock ~p", [VClock1]),
     ?assertEqual(7, crdt_bcounter:permissions(Counter1)),
-    ?assertEqual(5, crdt_bcounter:localPermissions(Id1,Counter1)),
-    ?assertEqual(2, crdt_bcounter:localPermissions(Id2,Counter1)),
+    ?assertEqual(5, crdt_bcounter:local_permissions(Id1,Counter1)),
+    ?assertEqual(2, crdt_bcounter:local_permissions(Id2,Counter1)),
     %% Test a forbidden chain of operations.
-    Result2 = rpc:call(Node2, antidote, clocksi_execute_tx, [ VClock2, [
-                                                                        {update, Key, Type, {{decrement, 3}, Id2}},
-                                                                        {read, Key, Type}
+    Result2 = rpc:call(Node2, antidote, clocksi_execute_tx, [ VClock1, [
+                                                                        {update, {Key, Type, {{decrement, 3}, Id2}}},
+                                                                        {read, {Key, Type}}
                                                                        ]]),
     lager:info("Done 3rd transaction", []),
     ?assertEqual({error, no_permissions}, Result2).

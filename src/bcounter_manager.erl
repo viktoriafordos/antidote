@@ -33,7 +33,7 @@ request_permissions(Node, Key, Time, Counter, Id, Amount) ->
 %% ===================================================================
 
 init([]) ->
-    lager:info("~p", [node()]),
+    lager:info("Bounded Counter manager started in ~p.",[node()]),
     {ok, #state{
             requests = ets:new(bcounter_requests, [])
            }}.
@@ -69,7 +69,8 @@ inner_request_permissions(Key, Id, OldRequest, Time, Counter, Amount) ->
     case OldRequest of
         [{OldAmount, OldPermissions, OldTime}] ->
             {NewPermissions, NewTime} = if
-                                            Time > OldTime -> {crdt_bcounter:permissions(Counter), Time};
+                                            Time > OldTime ->
+                                                {crdt_bcounter:permissions(Counter), Time};
                                             true -> {OldPermissions, Time}
                                         end,
             DeltaPermissions = Amount - OldAmount,
@@ -87,7 +88,7 @@ inner_request_permissions(Key, Id, OldRequest, Time, Counter, Amount) ->
     end.
 
 remote_request_permissions(Key, Id, Counter, Amount) ->
-    LocalPermissions = crdt_bcounter:localPermissions(Id, Counter),
+    LocalPermissions = crdt_bcounter:local_permissions(Id, Counter),
     MissingPermissions = Amount - LocalPermissions,
     RequestList = get_request_list(Counter, Id, MissingPermissions),
     remote_request_permissions(Key, RequestList).
@@ -96,19 +97,21 @@ remote_request_permissions(Key, ReqList) ->
     lager:info("Request list for ~p: ~p", [Key, ReqList]).
 %TODO: Issue remote permission request.
 
-get_request_list({P,D}, _MyId, Amount) ->
-    %TODO: Handle local DC, MyId (e.g. only collect Id such that Id =/= MyId)
-    GetLocalPermissions = fun(Id,_Decrements,List) ->
-                                  LocalPermissions = crdt_bcounter:localPermissions(Id,{P,D}),
-                                  if  LocalPermissions > 0 ->
-                                          [{Id,LocalPermissions} | List];
-                                      true -> List
-                                  end
-                          end,
-    UnsortedPermissions = orddict:fold(GetLocalPermissions,[],D),
+get_request_list(Counter, MyId, Amount) ->
+    UnsortedPermissions = lists:filter(
+                            fun({Id,Val}) ->
+                                    case Id of
+                                        MyId -> false;
+                                        _ when Val == 0 -> false;
+                                        _ -> true
+                                    end
+                            end,
+                                    crdt_bcounter:permissions_per_owner(Counter)),
+    %lager:info("Unsorted permissions ~p",[UnsortedPermissions]),
     Permissions = lists:sort(
                     fun({_Id1,P1}, {_Id2,P2}) -> P1 >= P2 end,
                     UnsortedPermissions),
+    %lager:info("Sorted permissions ~p",[Permissions]),
     build_request_list(Permissions, Amount, [], 0).
 
 get_top_list([{Id,P}], Length) ->
@@ -117,7 +120,8 @@ get_top_list([{Id1,P1}, {Id2,P1} | Rest], Length) ->
     {List, Step, Tail, NewLength} = get_top_list([{Id2,P1} | Rest], Length+1),
     {[{Id1,0} | List], Step, Tail, NewLength};
 get_top_list([{Id1,P1}, {Id2,P2} | Rest], Length) ->
-    {[{Id1,0}], P1 - P2, [{Id2,P2} | Rest], Length+1}.
+    {[{Id1,0}], P1 - P2, [{Id2,P2} | Rest], Length+1};
+get_top_list([], _) -> {[], [], [], 0}.
 
 build_request_list(Permissions, Amount, ReqList, Length) ->
     {TopList, Step, Rest, NewLength} = get_top_list(Permissions, Length),
@@ -133,7 +137,7 @@ build_request_list(Permissions, Amount, ReqList, Length) ->
 
 finish_req_list(ReqList, Amount, Length) ->
     Rem = Amount rem Length,
-    Step = Amount/Length + 1,
+    Step = Amount div Length + 1,
     update_req_list(ReqList, Step, Rem).
 
 update_req_list(ReqList, Step, 0) ->
