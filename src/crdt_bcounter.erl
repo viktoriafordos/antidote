@@ -16,7 +16,7 @@
 
 %% API
 -export([new/0,
-         localPermissions/2,
+         local_permissions/2,
          permissions/1,
          permissions_per_owner/1,
          value/1,
@@ -46,8 +46,8 @@ new() ->
     {orddict:new(),orddict:new()}.
 
 %% @doc Return the available permissions of replica `Id' in a `bcounter()'.
--spec localPermissions(id(),bcounter()) -> non_neg_integer().
-localPermissions(Id,{P,D}) ->
+-spec local_permissions(id(),bcounter()) -> non_neg_integer().
+local_permissions(Id,{P,D}) ->
     Received = lists:foldl(
                  fun(
                    {_,V},Acc) ->
@@ -101,7 +101,7 @@ permissions_per_owner({_,D}=C) ->
     orddict:fold(
       fun
           (Id,_,AccMap) ->
-              orddict:store(Id, localPermissions(Id,C), AccMap)
+              orddict:store(Id, local_permissions(Id,C), AccMap)
       end, orddict:new(), D).
 
 %% @doc Return the read value of a given `bcounter()', itself.
@@ -132,7 +132,7 @@ generate_downstream_id({transfer,V,To}, Id, Counter) when is_integer(V), V > 0 -
     generate_downstream_check({transfer,V,To}, Id, Counter, V).
 
 generate_downstream_check(Op, Id, Counter, V) ->
-    Available = localPermissions(Id, Counter),
+    Available = local_permissions(Id, Counter),
     if  Available >= V -> {ok, {Op,Id}};
         Available <  V -> {error, {no_permissions, {Id,V}}}
     end.
@@ -217,19 +217,19 @@ increment_test() ->
     Counter1 = apply_op({increment, 10}, r1, Counter0),
     Counter2 = apply_op({increment, 5}, r2, Counter1),
     %% Test replicas' values.
-    ?assertEqual(5, localPermissions(r2,Counter2)),
-    ?assertEqual(10, localPermissions(r1,Counter2)),
+    ?assertEqual(5, local_permissions(r2,Counter2)),
+    ?assertEqual(10, local_permissions(r1,Counter2)),
     %% Test total value.
     ?assertEqual(15, permissions(Counter2)).
 
-%% Tests the function `localPermissions()'.
+%% Tests the function `local_permissions()'.
 localPermisisons_test() ->
     Counter0 = new(),
     Counter1 = apply_op({increment, 10}, r1, Counter0),
     %% Test replica with positive amount of permissions.
-    ?assertEqual(10, localPermissions(r1,Counter1)),
+    ?assertEqual(10, local_permissions(r1,Counter1)),
     %% Test nonexistent replica.
-    ?assertEqual(0, localPermissions(r2,Counter1)).
+    ?assertEqual(0, local_permissions(r2,Counter1)).
 
 %% Tests decrement operations.
 decrement_test() ->
@@ -239,7 +239,7 @@ decrement_test() ->
     Counter2 = apply_op({decrement, 6}, r1, Counter1),
     ?assertEqual(4, permissions(Counter2)),
     %% Test nonexistent replica.
-    ?assertEqual(0, localPermissions(r2,Counter1)),
+    ?assertEqual(0, local_permissions(r2,Counter1)),
     %% Test forbidden decrement.
     OP_DS = generate_downstream_id({decrement, 6}, r1, Counter2),
     ?assertEqual({error,{no_permissions, {r1,6}}}, OP_DS).
@@ -265,16 +265,16 @@ transfer_test() ->
     Counter1 = apply_op({increment, 10}, r1, Counter0),
     %% Test transferring permissions from one replica to another.
     Counter2 = apply_op({transfer, 6, r2}, r1, Counter1),
-    ?assertEqual(4, localPermissions(r1,Counter2)),
-    ?assertEqual(6, localPermissions(r2,Counter2)),
+    ?assertEqual(4, local_permissions(r1,Counter2)),
+    ?assertEqual(6, local_permissions(r2,Counter2)),
     ?assertEqual(10, permissions(Counter2)),
     %% Test transference forbidden by lack of previously transfered resources.
     OP_DS = generate_downstream_id({transfer, 5, r2}, r1, Counter2),
     ?assertEqual({error,{no_permissions, {r1,5}}}, OP_DS),
     %% Test transference enabled by previously transfered resources.
     Counter3 = apply_op({transfer, 5, r1}, r2, Counter2),
-    ?assertEqual(9, localPermissions(r1,Counter3)),
-    ?assertEqual(1, localPermissions(r2,Counter3)),
+    ?assertEqual(9, local_permissions(r1,Counter3)),
+    ?assertEqual(1, local_permissions(r2,Counter3)),
     ?assertEqual(10, permissions(Counter3)).
 
 %% Tests the function `value()'.
