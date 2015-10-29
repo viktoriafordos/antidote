@@ -63,11 +63,19 @@ receive_message(timeout, State=#state{socket=Socket}) ->
                 {replicate, Updates} ->
                     ok =  inter_dc_recvr_vnode:store_updates(Updates) ,
                     case gen_tcp:send(Socket, term_to_binary(acknowledge)) of
-			ok ->
-			    ok;
-			{error,Reason} ->
-			    lager:error("Could not send ack, reason ~p", [Reason])
-		    end;
+                        ok ->
+                            ok;
+                        {error,Reason} ->
+                            lager:error("Could not send ack, reason ~p", [Reason])
+                    end;
+                {remote_transfer, {RemoteId, Key, ReqAmount}=_Args} ->
+                    bcounter_manager:transfer_permissions(RemoteId, Key, ReqAmount),
+                    case gen_tcp:send(Socket, term_to_binary(acknowledge)) of
+                        ok ->
+                            ok;
+                        {error,Reason} ->
+                            lager:error("Could not send ack, reason ~p", [Reason])
+                    end;
                 Unknown -> %% Add more messages to be handled
                     lager:error("Weird message received ~p", [Unknown])
             end;
