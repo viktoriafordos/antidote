@@ -96,7 +96,7 @@ decrement_test(Nodes) ->
     %% Test a forbidden chain of operations.
     Result1 = rpc:call(FirstNode, antidote, clocksi_execute_tx,
                        [[{update, {Key, Type, {{decrement, 8}, b}}}, {read, {Key, Type}}]]),
-    ?assertMatch({error, {no_permissions, {_, 8}}}, Result1).
+    ?assertMatch({error, no_permissions}, Result1).
 
 %% Tests the conditional write mechanism required for `generate_downstream()' and `update()' to be atomic.
 %% Such atomic execution is required for the correctness of `bcounter()' CRDT.
