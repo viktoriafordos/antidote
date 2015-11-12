@@ -23,11 +23,11 @@ start_link() ->
 % TODO: Support synch and asynch requests.
 request_permissions(Node, Key, Time, Counter, Id, Amount) ->
     Permissions = crdt_bcounter:value(Counter),
-    if
-        Permissions >= Amount ->
+    case Permissions >= Amount of
+        true ->
             gen_server:cast({?MODULE, Node}, {request_permissions,
                                               {Key, Time, Counter, Id, Amount}});
-        true -> ok
+        false -> ok
     end.
 
 % TODO: ignore duplicate requests.
@@ -58,8 +58,9 @@ handle_cast({request_permissions, {Key, Time, Counter, Id, Amount}},
             #state{requests=Requests} = State) ->
     OldRequest = ets:lookup(Requests, Key),
     NewRequest = inner_request_permissions(Key, Id, OldRequest, Time, Counter, Amount),
-    if  NewRequest =/= OldRequest -> ets:insert(Requests, {Key, NewRequest});
-        true -> ok
+    case  NewRequest =/= OldRequest of
+        true -> ets:insert(Requests, {Key, NewRequest});
+        false -> ok
     end,
     {noreply, State};
 
@@ -80,17 +81,16 @@ code_change(_OldVsn, State, _Extra) ->
 inner_request_permissions(Key, Id, OldRequest, Time, Counter, Amount) ->
     case OldRequest of
         [{OldAmount, OldPermissions, OldTime}] ->
-            {NewPermissions, NewTime} = if
-                                            Time > OldTime ->
+            {NewPermissions, NewTime} = case Time > OldTime of
+                                            true ->
                                                 {crdt_bcounter:permissions(Counter), Time};
-                                            true -> {OldPermissions, Time}
+                                            false -> {OldPermissions, Time}
                                         end,
             DeltaPermissions = Amount - OldAmount,
-            NewAmount = if
-                            DeltaPermissions > 0 ->
-                                remote_request_permissions(Key, Id, Counter, DeltaPermissions),
-                                Amount;
-                            true -> OldAmount
+            NewAmount = case DeltaPermissions > 0 of
+                            true -> remote_request_permissions(Key, Id, Counter, DeltaPermissions),
+                                    Amount;
+                            false -> OldAmount
                         end,
             {NewAmount, NewPermissions, NewTime};
         _ ->
@@ -108,12 +108,12 @@ remote_request_permissions(Key, Id, Counter, Amount) ->
 remote_request_permissions(Id, Key, ReqList) ->
     {ok, DCs} = inter_dc_manager:get_dcs(),
     DCReqPair = lists:foldl(
-                   fun({DCId, V}, FilteredAcc) ->
-                           case orddict:find(DCId, DCs) of
-                               {ok, DCAddress} -> [{{DCId,DCAddress}, V} | FilteredAcc];
-                               _ -> FilteredAcc
-                           end
-                   end, [], ReqList),
+                  fun({DCId, V}, FilteredAcc) ->
+                          case orddict:find(DCId, DCs) of
+                              {ok, DCAddress} -> [{{DCId,DCAddress}, V} | FilteredAcc];
+                              _ -> FilteredAcc
+                          end
+                  end, [], ReqList),
 
     lists:foreach(
       fun({DC, ReqAmount}) ->
@@ -125,58 +125,25 @@ remote_request_permissions(Id, Key, ReqList) ->
      ).
 
 get_request_list(Counter, MyId, Amount) ->
-    UnsortedPermissions = lists:filter(
-                            fun({Id,Val}) ->
-                                    case Id of
-                                        MyId -> false;
-                                        _ when Val == 0 -> false;
-                                        _ -> true
-                                    end
-                            end,
-                            crdt_bcounter:permissions_per_owner(Counter)),
-    Permissions = lists:sort(
-                    fun({_Id1,P1}, {_Id2,P2}) -> P1 >= P2 end,
-                    UnsortedPermissions),
-    build_request_list(Permissions, Amount, [], 0).
+    Permissions = crdt_bcounter:sorted_permission_per_owner(Counter),
+    inner_get_request_list([], Permissions, MyId, Amount).
 
-get_top_list([{Id,P}], Length) ->
-    {[{Id,0}], P, [], Length+1};
-get_top_list([{Id1,P1}, {Id2,P1} | Rest], Length) ->
-    {List, Step, Tail, NewLength} = get_top_list([{Id2,P1} | Rest], Length+1),
-    {[{Id1,0} | List], Step, Tail, NewLength};
-get_top_list([{Id1,P1}, {Id2,P2} | Rest], Length) ->
-    {[{Id1,0}], P1 - P2, [{Id2,P2} | Rest], Length+1};
-get_top_list([], _) -> {[], 0, [], 0}.
+inner_get_request_list(Requests, _Permissions, _MyId, 0) -> Requests;
 
-% This code is hard to follow nad does not seem to work very well.
-build_request_list(Permissions, Amount, ReqList, Length) ->
-    {TopList, Step, Rest, NewLength} = get_top_list(Permissions, Length),
-    NewReqList = lists:append(ReqList, TopList),
-    %TODO: Problem with step 0
-    StepArea = Step*NewLength,
-    Missing = Amount-StepArea,
-    if  Missing =< 0 ->
-            finish_req_list(NewReqList, Amount, NewLength);
+inner_get_request_list(Requests, [], _MyId, _AmountRem) -> Requests;
+
+inner_get_request_list(Requests, [{MyId, _} | TailPer], MyId, AmountRem) ->
+    inner_get_request_list(Requests, TailPer, MyId, AmountRem);
+
+inner_get_request_list(Requests, [{DCId, Value} | TailPer], MyId, AmountRem) ->
+    case AmountRem - Value > 0 of
         true ->
-            NewList = update_req_list(NewReqList, Step),
-            build_request_list(Rest, Missing, NewList, NewLength)
+            inner_get_request_list([{DCId, Value} | Requests], TailPer, MyId, AmountRem - Value);
+        false when Value > 0 ->
+            inner_get_request_list([{DCId, AmountRem} | Requests], TailPer, MyId, 0);
+        false ->
+            inner_get_request_list(Requests, [], MyId, 0)
     end.
-
-finish_req_list(ReqList, Amount, Length) ->
-    Rem = Amount rem Length,
-    Step = Amount div Length + 1,
-    update_req_list(ReqList, Step, Rem).
-
-update_req_list(ReqList, Step, 0) ->
-    update_req_list(ReqList, Step-1);
-update_req_list([{Id,P} | Rest], Step, Rem) ->
-    ReqList = update_req_list(Rest, Step, Rem-1),
-    [{Id, P+Step} | ReqList].
-
-update_req_list(ReqList, Step) ->
-    lists:map(
-      fun({Id,P}) -> {Id,P+Step} end,
-      ReqList).
 
 % Will we support more data-types with the same interface?
 % Need to abstract type in that case.

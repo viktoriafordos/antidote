@@ -19,6 +19,7 @@
          local_permissions/2,
          permissions/1,
          permissions_per_owner/1,
+         sorted_permission_per_owner/1,
          value/1,
          generate_downstream/3,
          update/2,
@@ -104,6 +105,13 @@ permissions_per_owner({_,D}=C) ->
               orddict:store(Id, local_permissions(Id,C), AccMap)
       end, orddict:new(), D).
 
+sorted_permission_per_owner(C) ->
+    UnsortedPerPerOwner = permissions_per_owner(C),
+    SortFun = fun({_IDA, VA}, {_IDB, VB}) ->
+                   VA > VB
+           end,
+    lists:sort(SortFun, UnsortedPerPerOwner).
+
 %% @doc Return the read value of a given `bcounter()', itself.
 -spec value(bcounter()) -> bcounter().
 value(Counter) -> Counter.
@@ -133,8 +141,9 @@ generate_downstream_id({transfer,V,To}, Id, Counter) when is_integer(V), V > 0 -
 
 generate_downstream_check(Op, Id, Counter, V) ->
     Available = local_permissions(Id, Counter),
-    if  Available >= V -> {ok, {Op,Id}};
-        Available <  V -> {error, {no_permissions, {Id,V}}}
+    case Available >= V of
+        true -> {ok, {Op,Id}};
+        false -> {error, {no_permissions, {Id,V}}}
     end.
 
 %% @doc Update a `bcounter()' with a downstream operation,
