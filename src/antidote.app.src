@@ -9,7 +9,8 @@
                   stdlib,
                   riak_pb,
                   riak_api,
-                  riak_core
+                  riak_core,
+                  eleveldb
                  ]},
   {mod, { antidote_app, []}},
   {env, []}
