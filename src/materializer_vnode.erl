@@ -577,55 +577,53 @@ multipledc_write_test() ->
     eleveldb:close(OpsCache),
     eleveldb:close(SnapshotCache).
 
-%%concurrent_write_test() ->
-%%    {ok, OpsCache} = eleveldb:open("OpsCacheDB_concurrent_write_test", [{create_if_missing, true}]),
-%%    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_concurrent_write_test", [{create_if_missing, true}]),
-%%%%    OpsCache = ets:new(ops_cache, [set]),
-%%%%    SnapshotCache = ets:new(snapshot_cache, [set]),
-%%    Key = mycount,
-%%    Type = riak_dt_gcounter,
-%%    DC1 = local,
-%%    DC2 = remote,
-%%    S1 = Type:new(),
-%%
-%%    %% Insert one increment in DC1
-%%    {ok,Op1} = Type:update(increment, a, S1),
-%%    DownstreamOp1 = #clocksi_payload{key = Key,
-%%                                     type = Type,
-%%                                     op_param = {merge, Op1},
-%%                                     snapshot_time = vectorclock:from_list([{DC1,0}, {DC2,0}]),
-%%                                     commit_time = {DC2, 1},
-%%                                     txid = 1
-%%                                    },
-%%    op_insert_gc(Key,DownstreamOp1,OpsCache, SnapshotCache),
-%%    {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC2,1}, {DC1,0}]), ignore, OpsCache, SnapshotCache),
-%%    ?assertEqual(1, Type:value(Res1)),
-%%
-%%    %% Another concurrent increment in other DC
-%%    {ok, Op2} = Type:update(increment, b, S1),
-%%    DownstreamOp2 = #clocksi_payload{ key = Key,
-%%				      type = Type,
-%%				      op_param = {merge, Op2},
-%%				      snapshot_time=vectorclock:from_list([{DC1,0}, {DC2,0}]),
-%%				      commit_time = {DC1, 1},
-%%				      txid=2},
-%%    op_insert_gc(Key,DownstreamOp2,OpsCache, SnapshotCache),
-%%
-%%    %% Read different snapshots
-%%    {ok, ReadDC1} = internal_read(Key, Type, vectorclock:from_list([{DC1,1}, {DC2, 0}]), ignore, OpsCache, SnapshotCache),
-%%    ?assertEqual(1, Type:value(ReadDC1)),
-%%    io:format("Result1 = ~p", [ReadDC1]),
-%%    {ok, ReadDC2} = internal_read(Key, Type, vectorclock:from_list([{DC1,0},{DC2,1}]), ignore, OpsCache, SnapshotCache),
-%%    io:format("Result2 = ~p", [ReadDC2]),
-%%    ?assertEqual(1, Type:value(ReadDC2)),
-%%
-%%    %% Read snapshot including both increments
-%%    {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC2,1}, {DC1,1}]), ignore, OpsCache, SnapshotCache),
-%%    ?assertEqual(2, Type:value(Res2)),
-%%
-%%    eleveldb:close(OpsCache),
-%%    eleveldb:close(SnapshotCache).
-%%
+concurrent_write_test() ->
+    {ok, OpsCache} = eleveldb:open("OpsDB_concurrent_write_test", [{create_if_missing, true}]),
+    {ok, SnapshotCache} = eleveldb:open("SnapshotsDB_concurrent_write_test", [{create_if_missing, true}]),
+    Key = mycount,
+    Type = riak_dt_gcounter,
+    DC1 = local,
+    DC2 = remote,
+    S1 = Type:new(),
+
+    %% Insert one increment in DC1
+    {ok,Op1} = Type:update(increment, a, S1),
+    DownstreamOp1 = #clocksi_payload{key = Key,
+                                     type = Type,
+                                     op_param = {merge, Op1},
+                                     snapshot_time = vectorclock:from_list([{DC1,0}, {DC2,0}]),
+                                     commit_time = {DC2, 1},
+                                     txid = 1
+                                    },
+    op_insert_gc(Key,DownstreamOp1,OpsCache, SnapshotCache),
+    {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC2,1}, {DC1,0}]), ignore, OpsCache, SnapshotCache),
+    ?assertEqual(1, Type:value(Res1)),
+
+    %% Another concurrent increment in other DC
+    {ok, Op2} = Type:update(increment, b, S1),
+    DownstreamOp2 = #clocksi_payload{ key = Key,
+				      type = Type,
+				      op_param = {merge, Op2},
+				      snapshot_time=vectorclock:from_list([{DC1,0}, {DC2,0}]),
+				      commit_time = {DC1, 1},
+				      txid=2},
+    op_insert_gc(Key,DownstreamOp2,OpsCache, SnapshotCache),
+
+    %% Read different snapshots
+    {ok, ReadDC1} = internal_read(Key, Type, vectorclock:from_list([{DC1,1}, {DC2, 0}]), ignore, OpsCache, SnapshotCache),
+    ?assertEqual(1, Type:value(ReadDC1)),
+    io:format("Result1 = ~p", [ReadDC1]),
+    {ok, ReadDC2} = internal_read(Key, Type, vectorclock:from_list([{DC1,0},{DC2,1}]), ignore, OpsCache, SnapshotCache),
+    io:format("Result2 = ~p", [ReadDC2]),
+    ?assertEqual(1, Type:value(ReadDC2)),
+
+    %% Read snapshot including both increments
+    {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC2,1}, {DC1,1}]), ignore, OpsCache, SnapshotCache),
+    ?assertEqual(2, Type:value(Res2)),
+
+    eleveldb:close(OpsCache),
+    eleveldb:close(SnapshotCache).
+
 %%%% Check that a read to a key that has never been read or updated, returns the CRDTs initial value
 %%%% E.g., for a gcounter, return 0.
 %%read_nonexisting_key_test() ->
