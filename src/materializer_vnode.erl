@@ -535,50 +535,48 @@ seq_write_test() ->
     eleveldb:close(OpsCache),
     eleveldb:close(SnapshotCache).
 
-%%
-%%multipledc_write_test() ->
-%%    {ok, OpsCache} = eleveldb:open("OpsCacheDB_multipledc_write_test", [{create_if_missing, true}]),
-%%    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_multipledc_write_test", [{create_if_missing, true}]),
-%%%%    OpsCache = ets:new(ops_cache, [set]),
-%%%%    SnapshotCache = ets:new(snapshot_cache, [set]),
-%%    Key = mycount,
-%%    Type = riak_dt_gcounter,
-%%    DC1 = 1,
-%%    DC2 = 2,
-%%    S1 = Type:new(),
-%%
-%%    %% Insert one increment in DC1
-%%    {ok,Op1} = Type:update(increment, a, S1),
-%%    DownstreamOp1 = #clocksi_payload{key = Key,
-%%                                     type = Type,
-%%                                     op_param = {merge, Op1},
-%%                                     snapshot_time = vectorclock:from_list([{DC2,0}, {DC1,10}]),
-%%                                     commit_time = {DC1, 15},
-%%                                     txid = 1
-%%                                    },
-%%    op_insert_gc(Key,DownstreamOp1,OpsCache, SnapshotCache),
-%%    {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC1,16},{DC2,0}]), ignore, OpsCache, SnapshotCache),
-%%    ?assertEqual(1, Type:value(Res1)),
-%%
-%%    %% Insert second increment in other DC
-%%    {ok,Op2} = Type:update(increment, b, Res1),
-%%    DownstreamOp2 = DownstreamOp1#clocksi_payload{
-%%                      op_param = {merge, Op2},
-%%                      snapshot_time=vectorclock:from_list([{DC2,16}, {DC1,16}]),
-%%                      commit_time = {DC2,20},
-%%                      txid=2},
-%%
-%%    op_insert_gc(Key,DownstreamOp2,OpsCache, SnapshotCache),
-%%    {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}, {DC2,21}]), ignore, OpsCache, SnapshotCache),
-%%    ?assertEqual(2, Type:value(Res2)),
-%%
-%%    %% Read old version
-%%    {ok, ReadOld} = internal_read(Key, Type, vectorclock:from_list([{DC1,15}, {DC2,15}]), ignore, OpsCache, SnapshotCache),
-%%    ?assertEqual(1, Type:value(ReadOld)),
-%%
-%%    eleveldb:close(OpsCache),
-%%    eleveldb:close(SnapshotCache).
-%%
+
+multipledc_write_test() ->
+    {ok, OpsCache} = eleveldb:open("OpsDB_multipledc_write_test", [{create_if_missing, true}]),
+    {ok, SnapshotCache} = eleveldb:open("SnapshotDB_multipledc_write_test", [{create_if_missing, true}]),
+    Key = mycount,
+    Type = riak_dt_gcounter,
+    DC1 = 1,
+    DC2 = 2,
+    S1 = Type:new(),
+
+    %% Insert one increment in DC1
+    {ok,Op1} = Type:update(increment, a, S1),
+    DownstreamOp1 = #clocksi_payload{key = Key,
+                                     type = Type,
+                                     op_param = {merge, Op1},
+                                     snapshot_time = vectorclock:from_list([{DC2,0}, {DC1,10}]),
+                                     commit_time = {DC1, 15},
+                                     txid = 1
+                                    },
+    op_insert_gc(Key,DownstreamOp1,OpsCache, SnapshotCache),
+    {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC1,16},{DC2,0}]), ignore, OpsCache, SnapshotCache),
+    ?assertEqual(1, Type:value(Res1)),
+
+    %% Insert second increment in other DC
+    {ok,Op2} = Type:update(increment, b, Res1),
+    DownstreamOp2 = DownstreamOp1#clocksi_payload{
+                      op_param = {merge, Op2},
+                      snapshot_time=vectorclock:from_list([{DC2,16}, {DC1,16}]),
+                      commit_time = {DC2,20},
+                      txid=2},
+
+    op_insert_gc(Key,DownstreamOp2,OpsCache, SnapshotCache),
+    {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}, {DC2,21}]), ignore, OpsCache, SnapshotCache),
+    ?assertEqual(2, Type:value(Res2)),
+
+    %% Read old version
+    {ok, ReadOld} = internal_read(Key, Type, vectorclock:from_list([{DC1,15}, {DC2,15}]), ignore, OpsCache, SnapshotCache),
+    ?assertEqual(1, Type:value(ReadOld)),
+
+    eleveldb:close(OpsCache),
+    eleveldb:close(SnapshotCache).
+
 %%concurrent_write_test() ->
 %%    {ok, OpsCache} = eleveldb:open("OpsCacheDB_concurrent_write_test", [{create_if_missing, true}]),
 %%    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_concurrent_write_test", [{create_if_missing, true}]),
