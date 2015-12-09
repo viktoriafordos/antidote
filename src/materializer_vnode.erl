@@ -494,47 +494,46 @@ generate_payload(SnapshotTime,CommitTime,Prev,Name) ->
 		    }.
 
 
-%%
-%%seq_write_test() ->
-%%    {ok, OpsCache} = eleveldb:open("OpsCacheDB_multipledc_seq_write_test", [{create_if_missing, true}]),
-%%    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_seq_write_test", [{create_if_missing, true}]),
-%%%%    OpsCache = ets:new(ops_cache, [set]),
-%%%%    SnapshotCache = ets:new(snapshot_cache, [set]),
-%%    Key = mycount,
-%%    Type = riak_dt_gcounter,
-%%    DC1 = 1,
-%%    S1 = Type:new(),
-%%
-%%    %% Insert one increment
-%%    {ok,Op1} = Type:update(increment, a, S1),
-%%    DownstreamOp1 = #clocksi_payload{key = Key,
-%%                                     type = Type,
-%%                                     op_param = {merge, Op1},
-%%                                     snapshot_time = vectorclock:from_list([{DC1,10}]),
-%%                                     commit_time = {DC1, 15},
-%%                                     txid = 1
-%%                                    },
-%%    op_insert_gc(Key,DownstreamOp1, OpsCache, SnapshotCache),
-%%    {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}]),ignore, OpsCache, SnapshotCache),
-%%    ?assertEqual(1, Type:value(Res1)),
-%%    %% Insert second increment
-%%    {ok,Op2} = Type:update(increment, a, Res1),
-%%    DownstreamOp2 = DownstreamOp1#clocksi_payload{
-%%                      op_param = {merge, Op2},
-%%                      snapshot_time=vectorclock:from_list([{DC1,16}]),
-%%                      commit_time = {DC1,20},
-%%                      txid=2},
-%%
-%%    op_insert_gc(Key,DownstreamOp2, OpsCache, SnapshotCache),
-%%    {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC1,21}]), ignore, OpsCache, SnapshotCache),
-%%    ?assertEqual(2, Type:value(Res2)),
-%%
-%%    %% Read old version
-%%    {ok, ReadOld} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}]), ignore, OpsCache, SnapshotCache),
-%%    ?assertEqual(1, Type:value(ReadOld)),
-%%
-%%    eleveldb:close(OpsCache),
-%%    eleveldb:close(SnapshotCache).
+
+seq_write_test() ->
+    {ok, OpsCache} = eleveldb:open("OpsDB_multipledc_seq_write_test", [{create_if_missing, true}]),
+    {ok, SnapshotCache} = eleveldb:open("SnapshotsDB_seq_write_test", [{create_if_missing, true}]),
+    Key = mycount,
+    Type = riak_dt_gcounter,
+    DC1 = 1,
+    S1 = Type:new(),
+
+    %% Insert one increment
+    {ok,Op1} = Type:update(increment, a, S1),
+    DownstreamOp1 = #clocksi_payload{key = Key,
+                                     type = Type,
+                                     op_param = {merge, Op1},
+                                     snapshot_time = vectorclock:from_list([{DC1,10}]),
+                                     commit_time = {DC1, 15},
+                                     txid = 1
+                                    },
+    op_insert_gc(Key,DownstreamOp1, OpsCache, SnapshotCache),
+    {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}]),ignore, OpsCache, SnapshotCache),
+    ?assertEqual(1, Type:value(Res1)),
+
+    %% Insert second increment
+    {ok,Op2} = Type:update(increment, a, Res1),
+    DownstreamOp2 = DownstreamOp1#clocksi_payload{
+                      op_param = {merge, Op2},
+                      snapshot_time=vectorclock:from_list([{DC1,16}]),
+                      commit_time = {DC1,20},
+                      txid=2},
+
+    op_insert_gc(Key,DownstreamOp2, OpsCache, SnapshotCache),
+    {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC1,21}]), ignore, OpsCache, SnapshotCache),
+    ?assertEqual(2, Type:value(Res2)),
+
+    %% Read old version
+    {ok, ReadOld} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}]), ignore, OpsCache, SnapshotCache),
+    ?assertEqual(1, Type:value(ReadOld)),
+
+    eleveldb:close(OpsCache),
+    eleveldb:close(SnapshotCache).
 
 %%
 %%multipledc_write_test() ->
