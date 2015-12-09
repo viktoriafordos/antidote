@@ -409,8 +409,8 @@ belongs_to_snapshot_test()->
 
 %% @doc This tests to make sure when garbage collection happens, no updates are lost
 gc_test() ->
-    {ok, OpsCache} = eleveldb:open("OpsCacheDB_gc_test", [{create_if_missing, true}]),
-    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_gc_test", [{create_if_missing, true}]),
+    {ok, OpsCache} = eleveldb:open("OpsDBTest", [{create_if_missing, true}, {error_if_exists, true}]),
+    {ok, SnapshotCache} = eleveldb:open("SnapshotsDBTest", [{create_if_missing, true}, {error_if_exists, true}]),
     Key = mycount,
     DC1 = 1,
     Type = riak_dt_gcounter,
@@ -473,11 +473,7 @@ gc_test() ->
     {ok, Res13} = internal_read(Key, Type, vectorclock:from_list([{DC1,142}]),ignore, OpsCache, SnapshotCache),
     ?assertEqual(13, Type:value(Res13)),
 
-    eleveldb:close(OpsCache),
-    eleveldb:close(SnapshotCache).
-
-
-
+    close_and_destroy(OpsCache, SnapshotCache).
 
 generate_payload(SnapshotTime,CommitTime,Prev,Name) ->
     Key = mycount,
@@ -493,11 +489,9 @@ generate_payload(SnapshotTime,CommitTime,Prev,Name) ->
 		     txid = 1
 		    }.
 
-
-
 seq_write_test() ->
-    {ok, OpsCache} = eleveldb:open("OpsDB_multipledc_seq_write_test", [{create_if_missing, true}]),
-    {ok, SnapshotCache} = eleveldb:open("SnapshotsDB_seq_write_test", [{create_if_missing, true}]),
+    {ok, OpsCache} = eleveldb:open("OpsDBTest", [{create_if_missing, true}, {error_if_exists, true}]),
+    {ok, SnapshotCache} = eleveldb:open("SnapshotsDBTest", [{create_if_missing, true}, {error_if_exists, true}]),
     Key = mycount,
     Type = riak_dt_gcounter,
     DC1 = 1,
@@ -532,13 +526,11 @@ seq_write_test() ->
     {ok, ReadOld} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}]), ignore, OpsCache, SnapshotCache),
     ?assertEqual(1, Type:value(ReadOld)),
 
-    eleveldb:close(OpsCache),
-    eleveldb:close(SnapshotCache).
-
+    close_and_destroy(OpsCache, SnapshotCache).
 
 multipledc_write_test() ->
-    {ok, OpsCache} = eleveldb:open("OpsDB_multipledc_write_test", [{create_if_missing, true}]),
-    {ok, SnapshotCache} = eleveldb:open("SnapshotDB_multipledc_write_test", [{create_if_missing, true}]),
+    {ok, OpsCache} = eleveldb:open("OpsDBTest", [{create_if_missing, true}, {error_if_exists, true}]),
+    {ok, SnapshotCache} = eleveldb:open("SnapshotsDBTest", [{create_if_missing, true}, {error_if_exists, true}]),
     Key = mycount,
     Type = riak_dt_gcounter,
     DC1 = 1,
@@ -574,12 +566,11 @@ multipledc_write_test() ->
     {ok, ReadOld} = internal_read(Key, Type, vectorclock:from_list([{DC1,15}, {DC2,15}]), ignore, OpsCache, SnapshotCache),
     ?assertEqual(1, Type:value(ReadOld)),
 
-    eleveldb:close(OpsCache),
-    eleveldb:close(SnapshotCache).
+    close_and_destroy(OpsCache, SnapshotCache).
 
 concurrent_write_test() ->
-    {ok, OpsCache} = eleveldb:open("OpsDB_concurrent_write_test", [{create_if_missing, true}]),
-    {ok, SnapshotCache} = eleveldb:open("SnapshotsDB_concurrent_write_test", [{create_if_missing, true}]),
+    {ok, OpsCache} = eleveldb:open("OpsDBTest", [{create_if_missing, true}, {error_if_exists, true}]),
+    {ok, SnapshotCache} = eleveldb:open("SnapshotsDBTest", [{create_if_missing, true}, {error_if_exists, true}]),
     Key = mycount,
     Type = riak_dt_gcounter,
     DC1 = local,
@@ -621,20 +612,24 @@ concurrent_write_test() ->
     {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC2,1}, {DC1,1}]), ignore, OpsCache, SnapshotCache),
     ?assertEqual(2, Type:value(Res2)),
 
-    eleveldb:close(OpsCache),
-    eleveldb:close(SnapshotCache).
+    close_and_destroy(OpsCache, SnapshotCache).
 
 %% Check that a read to a key that has never been read or updated, returns the CRDTs initial value
 %% E.g., for a gcounter, return 0.
 read_nonexisting_key_test() ->
-    {ok, OpsCache} = eleveldb:open("OpsCacheDB_read_nonexisting_key_test", [{create_if_missing, true}]),
-    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_read_nonexisting_key_test", [{create_if_missing, true}]),
+    {ok, OpsCache} = eleveldb:open("OpsDBTest", [{create_if_missing, true}, {error_if_exists, true}]),
+    {ok, SnapshotCache} = eleveldb:open("SnapshotsDBTest", [{create_if_missing, true}, {error_if_exists, true}]),
     Type = riak_dt_gcounter,
     {ok, ReadResult} = internal_read(key, Type, vectorclock:from_list([{dc1,1}, {dc2, 0}]), ignore, OpsCache, SnapshotCache),
     ?assertEqual(0, Type:value(ReadResult)),
 
-    eleveldb:close(OpsCache),
-    eleveldb:close(SnapshotCache).
+    close_and_destroy(OpsCache, SnapshotCache).
+
+close_and_destroy(RefDB1,RefDB2) ->
+    eleveldb:close(RefDB1),
+    eleveldb:close(RefDB2),
+    eleveldb:destroy("OpsDBTest", []),
+    eleveldb:destroy("SnapshotsDBTest", []).
 
 
 -endif.
