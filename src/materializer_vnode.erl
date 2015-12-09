@@ -624,19 +624,17 @@ concurrent_write_test() ->
     eleveldb:close(OpsCache),
     eleveldb:close(SnapshotCache).
 
-%%%% Check that a read to a key that has never been read or updated, returns the CRDTs initial value
-%%%% E.g., for a gcounter, return 0.
-%%read_nonexisting_key_test() ->
-%%    {ok, OpsCache} = eleveldb:open("OpsCacheDB_read_nonexisting_key_test", [{create_if_missing, true}]),
-%%    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_read_nonexisting_key_test", [{create_if_missing, true}]),
-%%%%	OpsCache = ets:new(ops_cache, [set]),
-%%%%    SnapshotCache = ets:new(snapshot_cache, [set]),
-%%    Type = riak_dt_gcounter,
-%%    {ok, ReadResult} = internal_read(key, Type, vectorclock:from_list([{dc1,1}, {dc2, 0}]), ignore, OpsCache, SnapshotCache),
-%%    ?assertEqual(0, Type:value(ReadResult)),
-%%
-%%    eleveldb:close(OpsCache),
-%%    eleveldb:close(SnapshotCache).
+%% Check that a read to a key that has never been read or updated, returns the CRDTs initial value
+%% E.g., for a gcounter, return 0.
+read_nonexisting_key_test() ->
+    {ok, OpsCache} = eleveldb:open("OpsCacheDB_read_nonexisting_key_test", [{create_if_missing, true}]),
+    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_read_nonexisting_key_test", [{create_if_missing, true}]),
+    Type = riak_dt_gcounter,
+    {ok, ReadResult} = internal_read(key, Type, vectorclock:from_list([{dc1,1}, {dc2, 0}]), ignore, OpsCache, SnapshotCache),
+    ?assertEqual(0, Type:value(ReadResult)),
+
+    eleveldb:close(OpsCache),
+    eleveldb:close(SnapshotCache).
 
 
 -endif.
