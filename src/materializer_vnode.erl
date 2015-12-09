@@ -70,16 +70,8 @@ start_vnode(I) ->
 %%      directly, instead it just reads from the operations and snapshot tables that
 %%      are in shared memory, allowing concurrent reads.
 -spec read(key(), type(), snapshot_time(), txid(),cache_id(), cache_id(), partition_id()) -> {ok, snapshot()} | {error, reason()}.
-read(Key, Type, SnapshotTime, TxId,OpsCache,SnapshotCache,Partition) ->
-    case ets:info(OpsCache) of
-	undefined ->
-	    riak_core_vnode_master:sync_command({Partition,node()},
-						{read,Key,Type,SnapshotTime,TxId},
-						materializer_vnode_master,
-						infinity);
-	_ ->
-	    internal_read(Key, Type, SnapshotTime, TxId, OpsCache, SnapshotCache)
-    end.
+read(Key, Type, SnapshotTime, TxId,OpsCache,SnapshotCache,_Partition) ->
+    internal_read(Key, Type, SnapshotTime, TxId, OpsCache, SnapshotCache).
 
 -spec get_cache_name(non_neg_integer(),atom()) -> atom().
 get_cache_name(Partition,Base) ->
@@ -104,8 +96,8 @@ store_ss(Key, Snapshot, CommitTime) ->
                                         materializer_vnode_master).
 
 init([Partition]) ->
-    OpsCache = ets:new(get_cache_name(Partition,ops_cache), [set,protected,named_table,?TABLE_CONCURRENCY]),
-    SnapshotCache = ets:new(get_cache_name(Partition,snapshot_cache), [set,protected,named_table,?TABLE_CONCURRENCY]),
+    {ok, OpsCache} = eleveldb:open("OpsDB", [{create_if_missing, true}, {error_if_exists, true}]),
+    {ok, SnapshotCache} = eleveldb:open("SnapshotsDB", [{create_if_missing, true}, {error_if_exists, true}]),
     {ok, #state{partition=Partition, ops_cache=OpsCache, snapshot_cache=SnapshotCache}}.
 
 %% @doc The tables holding the updates and snapshots are shared with concurrent
@@ -132,19 +124,8 @@ check_table_ready([{Partition,Node}|Rest]) ->
 	    false
     end.
 
-handle_command({check_ready},_Sender,State = #state{partition=Partition}) ->
-    Result = case ets:info(get_cache_name(Partition,ops_cache)) of
-		 undefined ->
-		     false;
-		 _ ->
-		     case ets:info(get_cache_name(Partition,snapshot_cache)) of
-			 undefined ->
-			     false;
-			 _ ->
-			     true
-		     end
-	     end,
-    {reply, Result, State};
+handle_command({check_ready},_Sender,State = #state{partition=_Partition}) ->
+    {reply, true, State};
 
 
 handle_command({read, Key, Type, SnapshotTime, TxId}, _Sender,
@@ -172,7 +153,7 @@ handle_handoff_command(?FOLD_REQ{foldfun=Fun, acc0=Acc0} ,
     F = fun({Key,Operation}, A) ->
                 Fun(Key, Operation, A)
         end,
-    Acc = ets:foldl(F, Acc0, OpsCache),
+    Acc = eleveldb:fold(OpsCache, F, Acc0, []),
     {reply, Acc, State}.
 
 handoff_starting(_TargetNode, State) ->
@@ -186,19 +167,14 @@ handoff_finished(_TargetNode, State) ->
 
 handle_handoff_data(Data, State=#state{ops_cache=OpsCache}) ->
     {Key, Operation} = binary_to_term(Data),
-    true = ets:insert(OpsCache, {Key, Operation}),
+    ok = put_term(OpsCache, Key, Operation),
     {reply, ok, State}.
 
 encode_handoff_item(Key, Operation) ->
     term_to_binary({Key, Operation}).
 
 is_empty(State=#state{ops_cache=OpsCache}) ->
-    case ets:first(OpsCache) of
-        '$end_of_table' ->
-            {true, State};
-        _ ->
-            {false, State}
-    end.
+    {eleveldb:is_empty(OpsCache), State}.
 
 delete(State=#state{ops_cache=_OpsCache}) ->
     {ok, State}.
@@ -210,8 +186,8 @@ handle_exit(_Pid, _Reason, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State=#state{ops_cache=OpsCache,snapshot_cache=SnapshotCache}) ->
-    ets:delete(OpsCache),
-    ets:delete(SnapshotCache),
+    eleveldb:close(OpsCache),
+    eleveldb:close(SnapshotCache),
     ok.
 
 
@@ -220,10 +196,10 @@ terminate(_Reason, _State=#state{ops_cache=OpsCache,snapshot_cache=SnapshotCache
 
 -spec internal_store_ss(key(), snapshot(), snapshot_time(), cache_id(), cache_id()) -> true.
 internal_store_ss(Key,Snapshot,CommitTime,OpsCache,SnapshotCache) ->
-    SnapshotDict = case ets:lookup(SnapshotCache, Key) of
-		       [] ->
+    SnapshotDict = case get_key(SnapshotCache, Key) of
+			   not_found ->
 			   vector_orddict:new();
-		       [{_, SnapshotDictA}] ->
+		       SnapshotDictA ->
 			   SnapshotDictA
 		   end,
     SnapshotDict1=vector_orddict:insert_bigger(CommitTime,Snapshot, SnapshotDict),
@@ -234,8 +210,8 @@ internal_store_ss(Key,Snapshot,CommitTime,OpsCache,SnapshotCache) ->
 %% vnode when the write function calls it. That is done for garbage collection.
 -spec internal_read(key(), type(), snapshot_time(), txid() | ignore, cache_id(), cache_id()) -> {ok, snapshot()} | {error, no_snapshot}.
 internal_read(Key, Type, MinSnapshotTime, TxId, OpsCache, SnapshotCache) ->
-    Result = case ets:lookup(SnapshotCache, Key) of
-		 [] ->
+    Result = case get_key(SnapshotCache, Key) of
+		not_found ->
 		     %% First time reading this key, store an empty snapshot in the cache
 		     BlankSS = {0,clocksi_materializer:new(Type)},
 		     case TxId of
@@ -245,7 +221,7 @@ internal_read(Key, Type, MinSnapshotTime, TxId, OpsCache, SnapshotCache) ->
 			     materializer_vnode:store_ss(Key,BlankSS,vectorclock:new())
 		     end,
 		     {BlankSS,ignore,true};
-		 [{_, SnapshotDict}] ->
+         SnapshotDict ->
 		     case vector_orddict:get_smaller(MinSnapshotTime, SnapshotDict) of
 			 {undefined, _IsF} ->
 			     {error, no_snapshot};
@@ -261,10 +237,10 @@ internal_read(Key, Type, MinSnapshotTime, TxId, OpsCache, SnapshotCache) ->
 		Res = logging_vnode:get(Node, {get, LogId, MinSnapshotTime, Type, Key}),
 		Res;
 	    {LatestSnapshot1,SnapshotCommitTime1,IsFirst1} ->
-		case ets:lookup(OpsCache, Key) of
-		    [] ->
+		case get_key(OpsCache, Key) of
+			not_found ->
 			{0, [], LatestSnapshot1,SnapshotCommitTime1,IsFirst1};
-		    [{_, {Length1,Ops1}}] ->
+		    {Length1, Ops1} ->
 			{Length1,Ops1,LatestSnapshot1,SnapshotCommitTime1,IsFirst1}
 		end
 	end,
@@ -326,17 +302,17 @@ snapshot_insert_gc(Key, SnapshotDict, SnapshotCache, OpsCache)->
 	    CommitTime = lists:foldl(fun({CT1,_ST}, Acc) ->
 					     vectorclock:keep_min(CT1,Acc)
 				     end, CT, vector_orddict:to_list(PrunedSnapshots)),
-	    {Length,OpsDict} = case ets:lookup(OpsCache, Key) of
-				   []->
+	    {Length,OpsDict} = case get_key(OpsCache, Key) of
+					not_found ->
 				       {0,[]};
-				   [{_, {Len,Dict}}]->
+				   {Len,Dict}->
 				       {Len,Dict}
 			       end,
             {NewLength,PrunedOps}=prune_ops({Length,OpsDict}, CommitTime),
-            ets:insert(SnapshotCache, {Key, PrunedSnapshots}),
-            true = ets:insert(OpsCache, {Key, {NewLength,PrunedOps}});
+            ok = put_term(SnapshotCache, Key, PrunedSnapshots),
+            ok = put_term(OpsCache, Key, {NewLength, PrunedOps});
         false ->
-            true = ets:insert(SnapshotCache, {Key, SnapshotDict})
+            ok = put_term(SnapshotCache, Key, SnapshotDict)
     end.
 
 %% @doc Remove from OpsDict all operations that have committed before Threshold.
@@ -368,11 +344,11 @@ prune_ops({_Len,OpsDict}, Threshold)->
 %% the GC mechanism.
 -spec op_insert_gc(key(), clocksi_payload(), cache_id(), cache_id()) -> true.
 op_insert_gc(Key, DownstreamOp, OpsCache, SnapshotCache)->
-    {Length,OpsDict,NewId} = case ets:lookup(OpsCache, Key) of
-				 []->
+    {Length,OpsDict,NewId} = case get_key(OpsCache, Key) of
+				 not_found->
 				     {0,[],1};
-				 [{_, {Len,[{PrevId,First}|Rest]}}]->
-				     {Len,[{PrevId,First}|Rest],PrevId+1}
+                 {Len, [{PrevId,First}|Rest]}->
+                     {Len,[{PrevId,First}|Rest],PrevId+1}
 		       end,
     case (Length)>=?OPS_THRESHOLD of
         true ->
@@ -380,18 +356,33 @@ op_insert_gc(Key, DownstreamOp, OpsCache, SnapshotCache)->
             SnapshotTime=DownstreamOp#clocksi_payload.snapshot_time,
             {_, _} = internal_read(Key, Type, SnapshotTime, ignore, OpsCache, SnapshotCache),
 	    %% Have to get the new ops dict because the interal_read can change it
-	    [{_, {Length1,OpsDict1}}] = ets:lookup(OpsCache, Key),
+	    [{_, {Length1,OpsDict1}}] = get_key(OpsCache, Key),
             OpsDict2=[{NewId,DownstreamOp} | OpsDict1],
-            ets:insert(OpsCache, {Key, {Length1 + 1, OpsDict2}});
+            ok = put_term(OpsCache, Key, {Length1 + 1, OpsDict2});
         false ->
             OpsDict1=[{NewId,DownstreamOp} | OpsDict],
-            ets:insert(OpsCache, {Key, {Length + 1,OpsDict1}})
+            ok = put_term(OpsCache, Key, {Length + 1,OpsDict1})
     end.
+
+get_key(Ref, Key) ->
+    Key1 = atom_to_binary(Key, utf8),
+    case eleveldb:get(Ref, Key1, []) of
+        {ok, Res} ->
+            binary_to_term(Res);
+        not_found ->
+			not_found
+    end.
+
+put_term(Ref, Key, Term) ->
+    Key1 = atom_to_binary(Key, utf8),
+    Term1 = term_to_binary(Term),
+    eleveldb:put(Ref, Key1, Term1, []).
+
 
 
 -ifdef(TEST).
 
-%% @doc Testing belongs_to_snapshot returns true when a commit time 
+%% @doc Testing belongs_to_snapshot returns true when a commit time
 %% is smaller than a snapshot time
 belongs_to_snapshot_test()->
 	CommitTime1a= 1,
@@ -418,8 +409,8 @@ belongs_to_snapshot_test()->
 
 %% @doc This tests to make sure when garbage collection happens, no updates are lost
 gc_test() ->
-    OpsCache = ets:new(ops_cache, [set]),
-    SnapshotCache = ets:new(snapshot_cache, [set]),
+    {ok, OpsCache} = eleveldb:open("OpsCacheDB_gc_test", [{create_if_missing, true}]),
+    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_gc_test", [{create_if_missing, true}]),
     Key = mycount,
     DC1 = 1,
     Type = riak_dt_gcounter,
@@ -480,7 +471,10 @@ gc_test() ->
 
     %% Be sure you didn't loose any updates
     {ok, Res13} = internal_read(Key, Type, vectorclock:from_list([{DC1,142}]),ignore, OpsCache, SnapshotCache),
-    ?assertEqual(13, Type:value(Res13)).
+    ?assertEqual(13, Type:value(Res13)),
+
+    eleveldb:close(OpsCache),
+    eleveldb:close(SnapshotCache).
 
 
 
@@ -500,134 +494,154 @@ generate_payload(SnapshotTime,CommitTime,Prev,Name) ->
 		    }.
 
 
+%%
+%%seq_write_test() ->
+%%    {ok, OpsCache} = eleveldb:open("OpsCacheDB_multipledc_seq_write_test", [{create_if_missing, true}]),
+%%    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_seq_write_test", [{create_if_missing, true}]),
+%%%%    OpsCache = ets:new(ops_cache, [set]),
+%%%%    SnapshotCache = ets:new(snapshot_cache, [set]),
+%%    Key = mycount,
+%%    Type = riak_dt_gcounter,
+%%    DC1 = 1,
+%%    S1 = Type:new(),
+%%
+%%    %% Insert one increment
+%%    {ok,Op1} = Type:update(increment, a, S1),
+%%    DownstreamOp1 = #clocksi_payload{key = Key,
+%%                                     type = Type,
+%%                                     op_param = {merge, Op1},
+%%                                     snapshot_time = vectorclock:from_list([{DC1,10}]),
+%%                                     commit_time = {DC1, 15},
+%%                                     txid = 1
+%%                                    },
+%%    op_insert_gc(Key,DownstreamOp1, OpsCache, SnapshotCache),
+%%    {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}]),ignore, OpsCache, SnapshotCache),
+%%    ?assertEqual(1, Type:value(Res1)),
+%%    %% Insert second increment
+%%    {ok,Op2} = Type:update(increment, a, Res1),
+%%    DownstreamOp2 = DownstreamOp1#clocksi_payload{
+%%                      op_param = {merge, Op2},
+%%                      snapshot_time=vectorclock:from_list([{DC1,16}]),
+%%                      commit_time = {DC1,20},
+%%                      txid=2},
+%%
+%%    op_insert_gc(Key,DownstreamOp2, OpsCache, SnapshotCache),
+%%    {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC1,21}]), ignore, OpsCache, SnapshotCache),
+%%    ?assertEqual(2, Type:value(Res2)),
+%%
+%%    %% Read old version
+%%    {ok, ReadOld} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}]), ignore, OpsCache, SnapshotCache),
+%%    ?assertEqual(1, Type:value(ReadOld)),
+%%
+%%    eleveldb:close(OpsCache),
+%%    eleveldb:close(SnapshotCache).
 
-seq_write_test() ->
-    OpsCache = ets:new(ops_cache, [set]),
-    SnapshotCache = ets:new(snapshot_cache, [set]),
-    Key = mycount,
-    Type = riak_dt_gcounter,
-    DC1 = 1,
-    S1 = Type:new(),
-
-    %% Insert one increment
-    {ok,Op1} = Type:update(increment, a, S1),
-    DownstreamOp1 = #clocksi_payload{key = Key,
-                                     type = Type,
-                                     op_param = {merge, Op1},
-                                     snapshot_time = vectorclock:from_list([{DC1,10}]),
-                                     commit_time = {DC1, 15},
-                                     txid = 1
-                                    },
-    op_insert_gc(Key,DownstreamOp1, OpsCache, SnapshotCache),
-    {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}]),ignore, OpsCache, SnapshotCache),
-    ?assertEqual(1, Type:value(Res1)),
-    %% Insert second increment
-    {ok,Op2} = Type:update(increment, a, Res1),
-    DownstreamOp2 = DownstreamOp1#clocksi_payload{
-                      op_param = {merge, Op2},
-                      snapshot_time=vectorclock:from_list([{DC1,16}]),
-                      commit_time = {DC1,20},
-                      txid=2},
-
-    op_insert_gc(Key,DownstreamOp2, OpsCache, SnapshotCache),
-    {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC1,21}]), ignore, OpsCache, SnapshotCache),
-    ?assertEqual(2, Type:value(Res2)),
-
-    %% Read old version
-    {ok, ReadOld} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}]), ignore, OpsCache, SnapshotCache),
-    ?assertEqual(1, Type:value(ReadOld)).
-
-
-multipledc_write_test() ->
-    OpsCache = ets:new(ops_cache, [set]),
-    SnapshotCache = ets:new(snapshot_cache, [set]),
-    Key = mycount,
-    Type = riak_dt_gcounter,
-    DC1 = 1,
-    DC2 = 2,
-    S1 = Type:new(),
-
-    %% Insert one increment in DC1
-    {ok,Op1} = Type:update(increment, a, S1),
-    DownstreamOp1 = #clocksi_payload{key = Key,
-                                     type = Type,
-                                     op_param = {merge, Op1},
-                                     snapshot_time = vectorclock:from_list([{DC2,0}, {DC1,10}]),
-                                     commit_time = {DC1, 15},
-                                     txid = 1
-                                    },
-    op_insert_gc(Key,DownstreamOp1,OpsCache, SnapshotCache),
-    {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC1,16},{DC2,0}]), ignore, OpsCache, SnapshotCache),
-    ?assertEqual(1, Type:value(Res1)),
-
-    %% Insert second increment in other DC
-    {ok,Op2} = Type:update(increment, b, Res1),
-    DownstreamOp2 = DownstreamOp1#clocksi_payload{
-                      op_param = {merge, Op2},
-                      snapshot_time=vectorclock:from_list([{DC2,16}, {DC1,16}]),
-                      commit_time = {DC2,20},
-                      txid=2},
-
-    op_insert_gc(Key,DownstreamOp2,OpsCache, SnapshotCache),
-    {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}, {DC2,21}]), ignore, OpsCache, SnapshotCache),
-    ?assertEqual(2, Type:value(Res2)),
-
-    %% Read old version
-    {ok, ReadOld} = internal_read(Key, Type, vectorclock:from_list([{DC1,15}, {DC2,15}]), ignore, OpsCache, SnapshotCache),
-    ?assertEqual(1, Type:value(ReadOld)).
-
-concurrent_write_test() ->
-    OpsCache = ets:new(ops_cache, [set]),
-    SnapshotCache = ets:new(snapshot_cache, [set]),
-    Key = mycount,
-    Type = riak_dt_gcounter,
-    DC1 = local,
-    DC2 = remote,
-    S1 = Type:new(),
-
-    %% Insert one increment in DC1
-    {ok,Op1} = Type:update(increment, a, S1),
-    DownstreamOp1 = #clocksi_payload{key = Key,
-                                     type = Type,
-                                     op_param = {merge, Op1},
-                                     snapshot_time = vectorclock:from_list([{DC1,0}, {DC2,0}]),
-                                     commit_time = {DC2, 1},
-                                     txid = 1
-                                    },
-    op_insert_gc(Key,DownstreamOp1,OpsCache, SnapshotCache),
-    {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC2,1}, {DC1,0}]), ignore, OpsCache, SnapshotCache),
-    ?assertEqual(1, Type:value(Res1)),
-
-    %% Another concurrent increment in other DC
-    {ok, Op2} = Type:update(increment, b, S1),
-    DownstreamOp2 = #clocksi_payload{ key = Key,
-				      type = Type,
-				      op_param = {merge, Op2},
-				      snapshot_time=vectorclock:from_list([{DC1,0}, {DC2,0}]),
-				      commit_time = {DC1, 1},
-				      txid=2},
-    op_insert_gc(Key,DownstreamOp2,OpsCache, SnapshotCache),
-
-    %% Read different snapshots
-    {ok, ReadDC1} = internal_read(Key, Type, vectorclock:from_list([{DC1,1}, {DC2, 0}]), ignore, OpsCache, SnapshotCache),
-    ?assertEqual(1, Type:value(ReadDC1)),
-    io:format("Result1 = ~p", [ReadDC1]),
-    {ok, ReadDC2} = internal_read(Key, Type, vectorclock:from_list([{DC1,0},{DC2,1}]), ignore, OpsCache, SnapshotCache),
-    io:format("Result2 = ~p", [ReadDC2]),
-    ?assertEqual(1, Type:value(ReadDC2)),
-
-    %% Read snapshot including both increments
-    {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC2,1}, {DC1,1}]), ignore, OpsCache, SnapshotCache),
-    ?assertEqual(2, Type:value(Res2)).
-
-%% Check that a read to a key that has never been read or updated, returns the CRDTs initial value
-%% E.g., for a gcounter, return 0.
-read_nonexisting_key_test() ->
-	OpsCache = ets:new(ops_cache, [set]),
-    SnapshotCache = ets:new(snapshot_cache, [set]),
-    Type = riak_dt_gcounter,
-    {ok, ReadResult} = internal_read(key, Type, vectorclock:from_list([{dc1,1}, {dc2, 0}]), ignore, OpsCache, SnapshotCache),
-    ?assertEqual(0, Type:value(ReadResult)).
+%%
+%%multipledc_write_test() ->
+%%    {ok, OpsCache} = eleveldb:open("OpsCacheDB_multipledc_write_test", [{create_if_missing, true}]),
+%%    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_multipledc_write_test", [{create_if_missing, true}]),
+%%%%    OpsCache = ets:new(ops_cache, [set]),
+%%%%    SnapshotCache = ets:new(snapshot_cache, [set]),
+%%    Key = mycount,
+%%    Type = riak_dt_gcounter,
+%%    DC1 = 1,
+%%    DC2 = 2,
+%%    S1 = Type:new(),
+%%
+%%    %% Insert one increment in DC1
+%%    {ok,Op1} = Type:update(increment, a, S1),
+%%    DownstreamOp1 = #clocksi_payload{key = Key,
+%%                                     type = Type,
+%%                                     op_param = {merge, Op1},
+%%                                     snapshot_time = vectorclock:from_list([{DC2,0}, {DC1,10}]),
+%%                                     commit_time = {DC1, 15},
+%%                                     txid = 1
+%%                                    },
+%%    op_insert_gc(Key,DownstreamOp1,OpsCache, SnapshotCache),
+%%    {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC1,16},{DC2,0}]), ignore, OpsCache, SnapshotCache),
+%%    ?assertEqual(1, Type:value(Res1)),
+%%
+%%    %% Insert second increment in other DC
+%%    {ok,Op2} = Type:update(increment, b, Res1),
+%%    DownstreamOp2 = DownstreamOp1#clocksi_payload{
+%%                      op_param = {merge, Op2},
+%%                      snapshot_time=vectorclock:from_list([{DC2,16}, {DC1,16}]),
+%%                      commit_time = {DC2,20},
+%%                      txid=2},
+%%
+%%    op_insert_gc(Key,DownstreamOp2,OpsCache, SnapshotCache),
+%%    {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC1,16}, {DC2,21}]), ignore, OpsCache, SnapshotCache),
+%%    ?assertEqual(2, Type:value(Res2)),
+%%
+%%    %% Read old version
+%%    {ok, ReadOld} = internal_read(Key, Type, vectorclock:from_list([{DC1,15}, {DC2,15}]), ignore, OpsCache, SnapshotCache),
+%%    ?assertEqual(1, Type:value(ReadOld)),
+%%
+%%    eleveldb:close(OpsCache),
+%%    eleveldb:close(SnapshotCache).
+%%
+%%concurrent_write_test() ->
+%%    {ok, OpsCache} = eleveldb:open("OpsCacheDB_concurrent_write_test", [{create_if_missing, true}]),
+%%    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_concurrent_write_test", [{create_if_missing, true}]),
+%%%%    OpsCache = ets:new(ops_cache, [set]),
+%%%%    SnapshotCache = ets:new(snapshot_cache, [set]),
+%%    Key = mycount,
+%%    Type = riak_dt_gcounter,
+%%    DC1 = local,
+%%    DC2 = remote,
+%%    S1 = Type:new(),
+%%
+%%    %% Insert one increment in DC1
+%%    {ok,Op1} = Type:update(increment, a, S1),
+%%    DownstreamOp1 = #clocksi_payload{key = Key,
+%%                                     type = Type,
+%%                                     op_param = {merge, Op1},
+%%                                     snapshot_time = vectorclock:from_list([{DC1,0}, {DC2,0}]),
+%%                                     commit_time = {DC2, 1},
+%%                                     txid = 1
+%%                                    },
+%%    op_insert_gc(Key,DownstreamOp1,OpsCache, SnapshotCache),
+%%    {ok, Res1} = internal_read(Key, Type, vectorclock:from_list([{DC2,1}, {DC1,0}]), ignore, OpsCache, SnapshotCache),
+%%    ?assertEqual(1, Type:value(Res1)),
+%%
+%%    %% Another concurrent increment in other DC
+%%    {ok, Op2} = Type:update(increment, b, S1),
+%%    DownstreamOp2 = #clocksi_payload{ key = Key,
+%%				      type = Type,
+%%				      op_param = {merge, Op2},
+%%				      snapshot_time=vectorclock:from_list([{DC1,0}, {DC2,0}]),
+%%				      commit_time = {DC1, 1},
+%%				      txid=2},
+%%    op_insert_gc(Key,DownstreamOp2,OpsCache, SnapshotCache),
+%%
+%%    %% Read different snapshots
+%%    {ok, ReadDC1} = internal_read(Key, Type, vectorclock:from_list([{DC1,1}, {DC2, 0}]), ignore, OpsCache, SnapshotCache),
+%%    ?assertEqual(1, Type:value(ReadDC1)),
+%%    io:format("Result1 = ~p", [ReadDC1]),
+%%    {ok, ReadDC2} = internal_read(Key, Type, vectorclock:from_list([{DC1,0},{DC2,1}]), ignore, OpsCache, SnapshotCache),
+%%    io:format("Result2 = ~p", [ReadDC2]),
+%%    ?assertEqual(1, Type:value(ReadDC2)),
+%%
+%%    %% Read snapshot including both increments
+%%    {ok, Res2} = internal_read(Key, Type, vectorclock:from_list([{DC2,1}, {DC1,1}]), ignore, OpsCache, SnapshotCache),
+%%    ?assertEqual(2, Type:value(Res2)),
+%%
+%%    eleveldb:close(OpsCache),
+%%    eleveldb:close(SnapshotCache).
+%%
+%%%% Check that a read to a key that has never been read or updated, returns the CRDTs initial value
+%%%% E.g., for a gcounter, return 0.
+%%read_nonexisting_key_test() ->
+%%    {ok, OpsCache} = eleveldb:open("OpsCacheDB_read_nonexisting_key_test", [{create_if_missing, true}]),
+%%    {ok, SnapshotCache} = eleveldb:open("SnapshotCacheDB_read_nonexisting_key_test", [{create_if_missing, true}]),
+%%%%	OpsCache = ets:new(ops_cache, [set]),
+%%%%    SnapshotCache = ets:new(snapshot_cache, [set]),
+%%    Type = riak_dt_gcounter,
+%%    {ok, ReadResult} = internal_read(key, Type, vectorclock:from_list([{dc1,1}, {dc2, 0}]), ignore, OpsCache, SnapshotCache),
+%%    ?assertEqual(0, Type:value(ReadResult)),
+%%
+%%    eleveldb:close(OpsCache),
+%%    eleveldb:close(SnapshotCache).
 
 
 -endif.
