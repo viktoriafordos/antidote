@@ -96,8 +96,8 @@ store_ss(Key, Snapshot, CommitTime) ->
                                         materializer_vnode_master).
 
 init([Partition]) ->
-    {ok, OpsCache} = eleveldb:open("OpsDB", [{create_if_missing, true}, {error_if_exists, true}]),
-    {ok, SnapshotCache} = eleveldb:open("SnapshotsDB", [{create_if_missing, true}, {error_if_exists, true}]),
+    {ok, OpsCache} = eleveldb:open("OpsDB", [{create_if_missing, true}]),
+    {ok, SnapshotCache} = eleveldb:open("SnapshotsDB", [{create_if_missing, true}]),
     {ok, #state{partition=Partition, ops_cache=OpsCache, snapshot_cache=SnapshotCache}}.
 
 %% @doc The tables holding the updates and snapshots are shared with concurrent
