@@ -71,11 +71,21 @@ start_vnode(I) ->
 %%      are in shared memory, allowing concurrent reads.
 -spec read(key(), type(), snapshot_time(), txid(),cache_id(), cache_id(), partition_id()) -> {ok, snapshot()} | {error, reason()}.
 read(Key, Type, SnapshotTime, TxId,OpsCache,SnapshotCache,_Partition) ->
-    internal_read(Key, Type, SnapshotTime, TxId, OpsCache, SnapshotCache).
+    Ops = case is_list(OpsCache) of
+              true -> {ok, Res} = eleveldb:open(OpsCache, [{create_if_missing, true}]),
+                  Res;
+                  false -> OpsCache
+          end,
+    Snap = case is_list(SnapshotCache) of
+              true -> {ok, Res1} = eleveldb:open(SnapshotCache, [{create_if_missing, true}]),
+                  Res1;
+              false -> SnapshotCache
+          end,
+    internal_read(Key, Type, SnapshotTime, TxId, Ops, Snap).
 
 -spec get_cache_name(non_neg_integer(),atom()) -> atom().
-get_cache_name(Partition,Base) ->
-    list_to_atom(atom_to_list(Base) ++ "-" ++ integer_to_list(Partition)).
+get_cache_name(Partition, Base) ->
+    atom_to_list(Base) ++ "-" ++ integer_to_list(Partition).
 
 %%@doc write operation to cache for future read, updates are stored
 %%     one at a time into the ets tables
@@ -96,8 +106,14 @@ store_ss(Key, Snapshot, CommitTime) ->
                                         materializer_vnode_master).
 
 init([Partition]) ->
-    {ok, OpsCache} = eleveldb:open("OpsDB", [{create_if_missing, true}]),
-    {ok, SnapshotCache} = eleveldb:open("SnapshotsDB", [{create_if_missing, true}]),
+    OpsCache = case eleveldb:open(get_cache_name(Partition, ops_db), [{create_if_missing, true}]) of
+        {ok, OpsCache1}  -> OpsCache1;
+        {error, Error} -> lager:info(Error)
+    end,
+    SnapshotCache = case eleveldb:open(get_cache_name(Partition, snapshots_db), [{create_if_missing, true}]) of
+        {ok, SnapshotCache1}  -> SnapshotCache1;
+        {error, Error1} -> lager:info(Error1)
+    end,
     {ok, #state{partition=Partition, ops_cache=OpsCache, snapshot_cache=SnapshotCache}}.
 
 %% @doc The tables holding the updates and snapshots are shared with concurrent
@@ -127,6 +143,8 @@ check_table_ready([{Partition,Node}|Rest]) ->
 handle_command({check_ready},_Sender,State = #state{partition=_Partition}) ->
     {reply, true, State};
 
+handle_command({get_dbs_refs}, _Sender, State = #state{ops_cache = OpsCache, snapshot_cache=SnapshotCache}) ->
+    {reply, {OpsCache, SnapshotCache}, State};
 
 handle_command({read, Key, Type, SnapshotTime, TxId}, _Sender,
                State = #state{ops_cache = OpsCache, snapshot_cache=SnapshotCache,partition=Partition})->
@@ -355,18 +373,23 @@ op_insert_gc(Key, DownstreamOp, OpsCache, SnapshotCache)->
             Type=DownstreamOp#clocksi_payload.type,
             SnapshotTime=DownstreamOp#clocksi_payload.snapshot_time,
             {_, _} = internal_read(Key, Type, SnapshotTime, ignore, OpsCache, SnapshotCache),
-	    %% Have to get the new ops dict because the interal_read can change it
-	    [{_, {Length1,OpsDict1}}] = get_key(OpsCache, Key),
+	        %% Have to get the new ops dict because the interal_read can change it
+	        [{_, {Length1,OpsDict1}}] = get_key(OpsCache, Key),
             OpsDict2=[{NewId,DownstreamOp} | OpsDict1],
-            ok = put_term(OpsCache, Key, {Length1 + 1, OpsDict2});
+            ok = put_term(OpsCache, Key, {Length1 + 1, OpsDict2}),
+            true;
         false ->
             OpsDict1=[{NewId,DownstreamOp} | OpsDict],
-            ok = put_term(OpsCache, Key, {Length + 1,OpsDict1})
+            ok = put_term(OpsCache, Key, {Length + 1,OpsDict1}),
+            true
     end.
 
 get_key(Ref, Key) ->
-    Key1 = atom_to_binary(Key, utf8),
-    case eleveldb:get(Ref, Key1, []) of
+    AKey = case is_binary(Key) of
+        true -> Key;
+        false -> atom_to_binary(Key, utf8)
+    end,
+    case eleveldb:get(Ref, AKey, []) of
         {ok, Res} ->
             binary_to_term(Res);
         not_found ->
@@ -374,9 +397,15 @@ get_key(Ref, Key) ->
     end.
 
 put_term(Ref, Key, Term) ->
-    Key1 = atom_to_binary(Key, utf8),
-    Term1 = term_to_binary(Term),
-    eleveldb:put(Ref, Key1, Term1, []).
+    AKey = case is_binary(Key) of
+               true -> Key;
+               false -> atom_to_binary(Key, utf8)
+           end,
+    ATerm = case is_binary(Term) of
+               true -> Term;
+               false -> term_to_binary(Term)
+           end,
+    eleveldb:put(Ref, AKey, ATerm, []).
 
 
 

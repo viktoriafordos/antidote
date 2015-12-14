@@ -160,8 +160,8 @@ generate_random_server_name(Node, Partition) ->
 
 init([Partition, Id]) ->
     Addr = node(),
-    OpsCache = materializer_vnode:get_cache_name(Partition,ops_cache),
-    SnapshotCache = materializer_vnode:get_cache_name(Partition,snapshot_cache),
+    OpsCache = undefined,
+    SnapshotCache = undefined,
     PreparedCache = clocksi_vnode:get_cache_name(Partition,prepared),
     Self = generate_server_name(Addr,Partition,Id),
     {ok, #state{partition=Partition, id=Id, ops_cache=OpsCache,
@@ -169,9 +169,11 @@ init([Partition, Id]) ->
 		prepared_cache=PreparedCache,self=Self}}.
 
 handle_call({perform_read, Key, Type, Transaction},Coordinator,
-	    SD0=#state{ops_cache=OpsCache,snapshot_cache=SnapshotCache,prepared_cache=PreparedCache,partition=Partition}) ->
-    ok = perform_read_internal(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,PreparedCache,Partition),
-    {noreply,SD0};
+	    SD0=#state{ops_cache=_OpsCache,snapshot_cache=_SnapshotCache,prepared_cache=PreparedCache,partition=Partition}) ->
+    #state{ops_cache=OpsCache1,snapshot_cache=SnapshotCache1} = update_state(Key, SD0),
+    SD1 = SD0#state{ops_cache = OpsCache1,snapshot_cache = SnapshotCache1},
+    ok = perform_read_internal(Coordinator, Key, Type, Transaction, OpsCache1, SnapshotCache1, PreparedCache, Partition),
+    {noreply,SD1};
 
 handle_call({go_down},_Sender,SD0) ->
     {stop,shutdown,ok,SD0}.
@@ -258,4 +260,17 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 terminate(_Reason, _SD) ->
     ok.
+
+
+update_state(Key, State = #state{ops_cache = OpsCache, snapshot_cache = _SnapshotCache}) ->
+    case OpsCache of
+          undefined ->
+              Preflist = log_utilities:get_preflist_from_key(Key),
+              IndexNode = hd(Preflist),
+              {OpsCache1, SnapshotCache1} = riak_core_vnode_master:sync_command(IndexNode,
+                  {get_dbs_refs}, materializer_vnode_master),
+              State#state{ops_cache=OpsCache1, snapshot_cache=SnapshotCache1};
+        _ ->
+            State
+    end.
 
