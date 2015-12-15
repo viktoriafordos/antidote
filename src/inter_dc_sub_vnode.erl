@@ -92,7 +92,6 @@ handle_command({txn, Txn = #interdc_txn{dcid = DCID}}, _Sender, State = #state{u
 	false ->
 	    process_txn(Txn, DCID, State);
 	_ ->
-	    lager:info("Adding delay ~p, for ~p", [DelayTime, DCID]),
 	    riak_core_vnode:send_command_after(DelayTime, {txn_delayed, Txn}),
 	    {noreply, State}
     end;
