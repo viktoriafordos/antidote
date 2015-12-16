@@ -17,7 +17,7 @@
 %% These are the tables that store materialized objects
 %% and information about live transactions, so the assumption
 %% is there will be several more reads than writes
--define(TABLE_CONCURRENCY, {read_concurrency,true}, {write_concurrency, true}).
+-define(TABLE_CONCURRENCY, {read_concurrency,true}).
 %% The read concurrency is the maximum number of concurrent
 %% readers per vnode.  This is so shared memory can be used
 %% in the case of keys that are read frequently.  There is
@@ -50,7 +50,7 @@
 -define(VECTORCLOCK_UPDATE_PERIOD, 100).
 %% This is the time that nodes will sleep inbetween sending meta-data
 %% to other physical nodes within the DC
--define(META_DATA_SLEEP, 50).
+-define(META_DATA_SLEEP, 100).
 -define(META_TABLE_NAME, a_meta_data_table).
 -define(REMOTE_META_TABLE_NAME, a_remote_meta_data_table).
 -define(META_TABLE_STABLE_NAME, a_meta_data_table_stable).
