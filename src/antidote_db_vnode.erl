@@ -30,22 +30,19 @@
     ops_db :: eleveldb:db_ref(),
     snapshots_db :: eleveldb:db_ref()}).
 
-%% TODO return correctly in an error case
 init([Partition]) ->
     %% Open Ops DB
-    OpsDB = case eleveldb:open(get_db_name(ops_db, Partition), [{create_if_missing, true}]) of
-                {ok, OpsDB1} -> OpsDB1;
-                {error, Error} -> {error, Error}
-            end,
+    OpsDB = eleveldb:open(get_db_name(ops_db, Partition), [{create_if_missing, true}]),
+
     %% Open Snapshots DB
-    SnapshotsDB = case eleveldb:open(get_db_name(snapshots_db, Partition), [{create_if_missing, true}]) of
-                      {ok, SnapshotsDB1} -> SnapshotsDB1;
-                      {error, Error1} -> {error, Error1}
-                  end,
-    %% Check of there where any errors
-    case element(1, OpsDB) == error or element(1, SnapshotsDB) == error of
-        true -> {stop, {error, OpsDB, SnapshotsDB}, undefined};
-        false -> {ok, #state{partition = Partition, ops_db = OpsDB, snapshots_db = SnapshotsDB}}
+    SnapshotsDB = eleveldb:open(get_db_name(snapshots_db, Partition), [{create_if_missing, true}]),
+
+    %% Check if there where any errors while opening the DBs
+    case (element(1, OpsDB) == error) or (element(1, SnapshotsDB) == error) of
+        true ->
+            {stop, {error, OpsDB, SnapshotsDB}, undefined};
+        false ->
+            {ok, #state{partition = Partition, ops_db = element(2, OpsDB), snapshots_db = element(2, SnapshotsDB)}}
     end.
 
 handle_command({get_op, Key}, _Sender, State = #state{ops_db = Ops}) ->
