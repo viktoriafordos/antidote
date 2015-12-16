@@ -180,7 +180,7 @@ handle_command({read, LogId}, _Sender,
                #state{partition=Partition, logs_map=Map}=State) ->
     case get_log_from_map(Map, Partition, LogId) of
         {ok, Log} ->
-           {Continuation, Ops} = 
+           {Continuation, Ops} =
                 case disk_log:chunk(Log, start) of
                     {C, O} -> {C,O};
                     {C, O, _} -> {C,O};
@@ -207,7 +207,7 @@ handle_command({read_from, LogId, _From}, _Sender,
     case get_log_from_map(Map, Partition, LogId) of
         {ok, Log} ->
             ok = disk_log:sync(Log),
-            {Continuation, Ops} = 
+            {Continuation, Ops} =
                 case disk_log:chunk(Log, Lastread) of
                     {error, Reason} -> {error, Reason};
                     {C, O} -> {C,O};
@@ -242,12 +242,12 @@ handle_command({append, LogId, Payload, Sync}, _Sender,
                 {ok, OpId} ->
 		    case Sync of
 			true ->
-			    case disk_log:sync(Log) of
-				ok ->
+%%			    case disk_log:sync(Log) of
+%%				ok ->
 				    {reply, {ok, OpId}, State#state{clock=NewClock}};
-				{error, Reason} ->
-				    {reply, {error, Reason}, State}
-			    end;
+%%				{error, Reason} ->
+%%				    {reply, {error, Reason}, State}
+%%			    end;
 			false ->
 			    {reply, {ok, OpId}, State#state{clock=NewClock}}
 		    end;
@@ -465,7 +465,7 @@ no_elements([], _Map) ->
     true;
 no_elements([LogId|Rest], Map) ->
     case dict:find(LogId, Map) of
-        {ok, Log} -> 
+        {ok, Log} ->
             case disk_log:chunk(Log, start) of
                 eof ->
                     no_elements(Rest, Map);
@@ -539,7 +539,7 @@ join_logs([{_Preflist, Log}|T], F, Acc) ->
     join_logs(T, F, JointAcc).
 
 fold_log(Log, Continuation, F, Acc) ->
-    case  disk_log:chunk(Log,Continuation) of 
+    case  disk_log:chunk(Log,Continuation) of
         eof ->
             Acc;
         {Next,Ops} ->
@@ -560,14 +560,15 @@ fold_log(Log, Continuation, F, Acc) ->
 %%
 -spec insert_operation(log(), log_id(), op_id(), payload()) ->
                               {ok, op_id()} | {error, reason()}.
-insert_operation(Log, LogId, OpId, Payload) ->
-    Result =disk_log:log(Log, {LogId, #operation{op_number=OpId, payload=Payload}}),
-    case Result of
-        ok ->
-            {ok, OpId};
-        {error, Reason} ->
-            {error, Reason}
-    end.
+insert_operation(_Log, _LogId, OpId, _Payload) ->
+%%    Result =disk_log:log(Log, {LogId, #operation{op_number=OpId, payload=Payload}}),
+%%    case Result of
+%%        ok ->
+%%            {ok, OpId};
+%%        {error, Reason} ->
+%%            {error, Reason}
+%%end.
+{ok, OpId}.
 
 %% @doc preflist_member: Returns true if the Partition identifier is
 %%              part of the Preflist

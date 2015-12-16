@@ -2,6 +2,7 @@
 -define(MASTER, antidote_vnode_master).
 -define(LOGGING_MASTER, logging_vnode_master).
 -define(CLOCKSI_MASTER, clocksi_vnode_master).
+-define(ANTIDOTE_DB_MASTER, antidote_db_vnode_master).
 -define(CLOCKSI_GENERATOR_MASTER,
         clocksi_downstream_generator_vnode_master).
 -define(CLOCKSI, clocksi).

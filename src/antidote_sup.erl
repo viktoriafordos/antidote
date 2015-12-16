@@ -50,15 +50,20 @@ stop_rep() ->
     ok = supervisor:terminate_child(?MODULE, inter_dc_communication_sup),
     _ = supervisor:delete_child(?MODULE, inter_dc_communication_sup),
     ok.
-    
+
 %% ===================================================================
 %% Supervisor callbacks
 %% ===================================================================
 
 init(_Args) ->
+    AntidoteDBMaster = {antidote_db_vnode_master,
+        {riak_core_vnode_master, start_link, [antidote_db_vnode]},
+        permanent, 5000, worker, [riak_core_vnode_master]},
+
     LoggingMaster = {logging_vnode_master,
                      {riak_core_vnode_master, start_link, [logging_vnode]},
                      permanent, 5000, worker, [riak_core_vnode_master]},
+
     ClockSIMaster = { clocksi_vnode_master,
                       {riak_core_vnode_master, start_link, [clocksi_vnode]},
                       permanent, 5000, worker, [riak_core_vnode_master]},
@@ -81,12 +86,12 @@ init(_Args) ->
                             {clocksi_interactive_tx_coord_sup, start_link, []},
                             permanent, 5000, supervisor,
                             [clockSI_interactive_tx_coord_sup]},
-    
+
     ClockSIReadSup = {clocksi_readitem_sup,
     		      {clocksi_readitem_sup, start_link, []},
     		      permanent, 5000, supervisor,
     		      [clocksi_readitem_sup]},
-    
+
     VectorClockMaster = {vectorclock_vnode_master,
                          {riak_core_vnode_master,  start_link,
                           [vectorclock_vnode]},
@@ -108,7 +113,8 @@ init(_Args) ->
 
     {ok,
      {{one_for_one, 5, 10},
-      [LoggingMaster,
+      [AntidoteDBMaster,
+       LoggingMaster,
        ClockSIMaster,
        ClockSIsTxCoordSup,
        ClockSIiTxCoordSup,
