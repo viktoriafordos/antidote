@@ -80,13 +80,16 @@ process_queue(State = #state{queue = Queue, last_observed_opid = Last}) ->
       %% If the transaction seems to come after an unknown transaction, ask the remote log
         gt ->
           lager:info("Whoops, lost message. Asking the remote DC ~p", [State#state.pdcid]),
-          case inter_dc_log_reader_query:query(State#state.pdcid, State#state.last_observed_opid + 1, TxnLast) of
-            ok ->
-              State#state{state_name = buffering};
-            _ ->
-              lager:warning("Failed to send log query to DC, will retry on next ping message"),
-              State#state{state_name = normal}
-          end;
+          deliver(Txn),
+          Max = inter_dc_txn:last_log_opid(Txn),
+          process_queue(State#state{queue = queue:drop(Queue), last_observed_opid = Max});	      
+          %% case inter_dc_log_reader_query:query(State#state.pdcid, State#state.last_observed_opid + 1, TxnLast) of
+          %%   ok ->
+          %%     State#state{state_name = buffering};
+          %%   _ ->
+          %%     lager:warning("Failed to send log query to DC, will retry on next ping message"),
+          %%     State#state{state_name = normal}
+          %% end;
 
       %% If the transaction has an old value, drop it.
         lt ->
