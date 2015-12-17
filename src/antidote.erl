@@ -45,6 +45,7 @@
 %% Old APIs, We would still need them for tests and benchmarks
 -export([append/3,
          read/2,
+         clocksi_execute_tx/4,
          clocksi_execute_tx/3,
          clocksi_execute_tx/2,
          clocksi_execute_tx/1,
@@ -165,7 +166,7 @@ update_objects(Clock, _Properties, Updates, StayAlive) ->
                     {error, Reason}
             end;
         false ->
-            case clocksi_execute_tx(Clock, Operations, StayAlive) of
+            case clocksi_execute_tx(Clock, Operations, update_clock, StayAlive) of
                 {ok, {_TxId, [], CommitTime}} ->
                     {ok, CommitTime};
                 {error, Reason} -> {error, Reason}
@@ -203,7 +204,7 @@ read_objects(Clock, _Properties, Objects, StayAlive) ->
         false ->
             case application:get_env(antidote, txn_prot) of
                 {ok, clocksi} ->
-                    case clocksi_execute_tx(Clock, Args, StayAlive) of
+                    case clocksi_execute_tx(Clock, Args, update_clock, StayAlive) of
                         {ok, {_TxId, Result, CommitTime}} ->
                             {ok, Result, CommitTime};
                         {error, Reason} -> {error, Reason}
@@ -211,7 +212,7 @@ read_objects(Clock, _Properties, Objects, StayAlive) ->
                 {ok, gr} ->
                     case Args of
                         [_Op] -> %% Single object read = read latest value
-                            case clocksi_execute_tx(Clock, Args, StayAlive) of
+                            case clocksi_execute_tx(Clock, Args, update_clock, StayAlive) of
                                 {ok, {_TxId, Result, CommitTime}} ->
                                     {ok, Result, CommitTime};
                                 {error, Reason} -> {error, Reason}
@@ -286,7 +287,7 @@ read(Key, Type) ->
 %%      error message in case of a failure.
 %%
 -spec clocksi_execute_tx(Clock :: snapshot_time(),
-                         [client_op()]) -> {ok, {txid(), [snapshot()], snapshot_time()}} | {error, term()}.
+                         [client_op()],snapshot_time(),boolean()) -> {ok, {txid(), [snapshot()], snapshot_time()}} | {error, term()}.
 clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive) ->
     case materializer:check_operations(Operations) of
         {error, Reason} ->
@@ -352,9 +353,9 @@ clocksi_istart_tx(Clock, KeepAlive) ->
 		false ->
 		    undefined
 	    end,
-    case TxPid of
+    _ = case TxPid of
 	undefined ->
-	    {ok, _} = clocksi_interactive_tx_coord_sup:start_fsm([self(), Clock, KeepAlive]);
+	    {ok, _} = clocksi_interactive_tx_coord_sup:start_fsm([self(), Clock, update_clock, KeepAlive]);
 	TxPid ->
 	    ok = gen_fsm:send_event(TxPid, {start_tx, self(), Clock})
     end,
