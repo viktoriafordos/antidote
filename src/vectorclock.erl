@@ -60,31 +60,31 @@ get_stable_snapshot() ->
 	    timer:sleep(10),
 	    get_stable_snapshot();
 	SS ->
-            case application:get_env(antidote, txn_prot) of
-                {ok, clocksi} -> 
+            %% case application:get_env(antidote, txn_prot) of
+            %%     {ok, clocksi} -> 
                     %% This is fine if transactions coordinators exists on the ring (i.e. they have access
                     %% to riak core meta-data) otherwise will have to change this
-                    {ok, SS};
-                {ok, gr} ->
-                    %% For gentlerain use the same format as clocksi
-                    %% But, replicate GST to all entries in the dict
-                    StableSnapshot = SS,
-                    case dict:size(StableSnapshot) of
-                        0 -> 
-                            {ok, StableSnapshot};
-                        _ ->
-                            ListTime = dict:fold( 
-                                         fun(_Key, Value, Acc) ->
-                                                 [Value | Acc ]
-                                         end, [], StableSnapshot),
-                            GST = lists:min(ListTime),
-                            {ok, dict:map( 
-                                   fun(_K, _V) ->
-                                           GST
-                                   end,
-                                   StableSnapshot)}
-                    end
-            end
+	    {ok, SS}
+	    %%     {ok, gr} ->
+            %%         %% For gentlerain use the same format as clocksi
+            %%         %% But, replicate GST to all entries in the dict
+            %%         StableSnapshot = SS,
+            %%         case dict:size(StableSnapshot) of
+            %%             0 -> 
+            %%                 {ok, StableSnapshot};
+            %%             _ ->
+            %%                 ListTime = dict:fold( 
+            %%                              fun(_Key, Value, Acc) ->
+            %%                                      [Value | Acc ]
+            %%                              end, [], StableSnapshot),
+            %%                 GST = lists:min(ListTime),
+            %%                 {ok, dict:map( 
+            %%                        fun(_K, _V) ->
+            %%                                GST
+            %%                        end,
+            %%                        StableSnapshot)}
+            %%         end
+            %% end
     end.
 
 -spec get_partition_snapshot(partition_id()) -> snapshot_time().
