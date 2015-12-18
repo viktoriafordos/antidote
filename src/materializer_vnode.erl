@@ -275,7 +275,14 @@ internal_read(Key, Type, MinSnapshotTime, TxId, OpsCache, SnapshotCache,ShouldGc
 		%% [Node] = log_utilities:get_preflist_from_key(Key),
 		%% Res = logging_vnode:get(Node, {get, LogId, MinSnapshotTime, Type, Key}),
 		%% Res;
-		{0, [], {0, clocksi_materializer:new(Type)}, ignore, false};
+		%% This is wrong and only to prevent overflow!!!
+		case ets:lookup(OpsCache, Key) of
+		    [] ->
+			{0, [], {0, clocksi_materializer:new(Type)}, ignore, false};
+		    [Tuple] ->
+			{Key,Length1,_OpId,AllOps} = tuple_to_key(Tuple),
+			{Length1, AllOps, {0, clocksi_materializer:new(Type)}, ignore, true}
+		end;
 	    {LatestSnapshot1,SnapshotCommitTime1,IsFirst1} ->
 		case ets:lookup(OpsCache, Key) of
 		    [] ->
@@ -296,6 +303,13 @@ internal_read(Key, Type, MinSnapshotTime, TxId, OpsCache, SnapshotCache,ShouldGc
 		    %% But is the snapshot not safe?
 		    case CommitTime of
 			ignore ->
+			    %% This is not correct, just to check if overflow!!!
+			    case ShouldGc of
+				true ->
+				    internal_store_ss(Key,{NewLastOp,Snapshot},CommitTime,OpsCache,SnapshotCache,ShouldGc);
+				false ->
+				    ok
+			    end,
 			    {ok, Snapshot};
 			_ ->
 			    case (NewSS and IsFirst) orelse ShouldGc of
@@ -352,7 +366,14 @@ snapshot_insert_gc(Key, SnapshotDict, SnapshotCache, OpsCache,ShouldGc)->
 				    end,
             {NewLength,PrunedOps}=prune_ops({Length,OpsDict}, CommitTime),
             ets:insert(SnapshotCache, {Key, PrunedSnapshots}),
-	    true = ets:insert(OpsCache, erlang:make_tuple(?FIRST_OP+?OPS_THRESHOLD,0,[{1,Key},{2,NewLength},{3,OpId}|PrunedOps]));
+
+	    %% This is wrong and only to prevent overflow!!
+	    case NewLength > (?OPS_THRESHOLD div 2) of
+		true ->
+		    true = ets:insert(OpsCache, erlang:make_tuple(?FIRST_OP+?OPS_THRESHOLD,0,[{1,Key},{2,0},{3,OpId}]));
+		false ->
+		    true = ets:insert(OpsCache, erlang:make_tuple(?FIRST_OP+?OPS_THRESHOLD,0,[{1,Key},{2,NewLength},{3,OpId}|PrunedOps]))
+	    end;
         false ->
             true = ets:insert(SnapshotCache, {Key, SnapshotDict})
     end.
