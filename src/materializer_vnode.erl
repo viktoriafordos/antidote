@@ -270,10 +270,12 @@ internal_read(Key, Type, MinSnapshotTime, TxId, OpsCache, SnapshotCache,ShouldGc
     {Length,Ops,{LastOp,LatestSnapshot},SnapshotCommitTime,IsFirst} =
 	case Result of
 	    {error, no_snapshot} ->
-		LogId = log_utilities:get_logid_from_key(Key),
-		[Node] = log_utilities:get_preflist_from_key(Key),
-		Res = logging_vnode:get(Node, {get, LogId, MinSnapshotTime, Type, Key}),
-		Res;
+		lager:info("should go to disk"),
+		%% LogId = log_utilities:get_logid_from_key(Key),
+		%% [Node] = log_utilities:get_preflist_from_key(Key),
+		%% Res = logging_vnode:get(Node, {get, LogId, MinSnapshotTime, Type, Key}),
+		%% Res;
+		{0, [], {0, clocksi_materializer:new(Type)}, ignore, false};
 	    {LatestSnapshot1,SnapshotCommitTime1,IsFirst1} ->
 		case ets:lookup(OpsCache, Key) of
 		    [] ->
