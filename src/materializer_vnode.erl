@@ -270,18 +270,19 @@ internal_read(Key, Type, MinSnapshotTime, TxId, OpsCache, SnapshotCache,ShouldGc
     {Length,Ops,{LastOp,LatestSnapshot},SnapshotCommitTime,IsFirst} =
 	case Result of
 	    {error, no_snapshot} ->
-		lager:info("should go to disk"),
+		%% lager:info("should go to disk"),
 		%% LogId = log_utilities:get_logid_from_key(Key),
 		%% [Node] = log_utilities:get_preflist_from_key(Key),
 		%% Res = logging_vnode:get(Node, {get, LogId, MinSnapshotTime, Type, Key}),
 		%% Res;
 		%% This is wrong and only to prevent overflow!!!
+		{ok, SSTime} = vectorclock:get_stable_snapshot(),
 		case ets:lookup(OpsCache, Key) of
 		    [] ->
-			{0, [], {0, clocksi_materializer:new(Type)}, ignore, false};
+			{0, [], {0, clocksi_materializer:new(Type)}, SSTime, true};
 		    [Tuple] ->
 			{Key,Length1,_OpId,AllOps} = tuple_to_key(Tuple),
-			{Length1, AllOps, {0, clocksi_materializer:new(Type)}, ignore, true}
+			{Length1, AllOps, {0, clocksi_materializer:new(Type)}, SSTime, true}
 		end;
 	    {LatestSnapshot1,SnapshotCommitTime1,IsFirst1} ->
 		case ets:lookup(OpsCache, Key) of
