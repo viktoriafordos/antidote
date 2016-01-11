@@ -34,9 +34,6 @@
 start(_StartType, _StartArgs) ->
     case antidote_sup:start_link() of
         {ok, Pid} ->
-            ok = riak_core:register([{vnode_module, antidote_db_vnode}]),
-            ok = riak_core_node_watcher:service_up(antidote_db, self()),
-
             ok = riak_core:register([{vnode_module, logging_vnode}]),
             ok = riak_core_node_watcher:service_up(logging, self()),
             %%ClockSI layer

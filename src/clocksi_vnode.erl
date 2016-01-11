@@ -48,7 +48,8 @@
     handle_handoff_data/2,
     encode_handoff_item/2,
     handle_coverage/4,
-    handle_exit/3]).
+    handle_exit/3,
+    get_dbs/1]).
 
 -ignore_xref([start_vnode/1]).
 
@@ -70,7 +71,9 @@
     prepared_tx :: cache_id(),
     committed_tx :: cache_id(),
     read_servers :: non_neg_integer(),
-    prepared_dict :: list()}).
+    prepared_dict :: list(),
+    ops_db :: eleveldb:db_ref(),
+    snapshots_db :: eleveldb:db_ref()}).
 
 %%%===================================================================
 %%% API
@@ -205,12 +208,25 @@ get_cache_name(Partition, Base) ->
 init([Partition]) ->
     PreparedTx = open_table(Partition),
     CommittedTx = ets:new(committed_tx, [set]),
-    Num = clocksi_readitem_fsm:start_read_servers(Partition, ?READ_CONCURRENCY),
-    {ok, #state{partition = Partition,
-        prepared_tx = PreparedTx,
-        committed_tx = CommittedTx,
-        read_servers = Num,
-        prepared_dict = orddict:new()}}.
+
+    OpsDB = eleveldb:open(antidote_leveldb:get_db_name(ops_db, Partition), [{create_if_missing, true}]),
+    SnapshotsDB = eleveldb:open(antidote_leveldb:get_db_name(snapshots_db, Partition), [{create_if_missing, true}]),
+
+    %% Check if there where any errors while opening the DBs
+    case (element(1, OpsDB) == error) or (element(1, SnapshotsDB) == error) of
+        true ->
+            {stop, {error, OpsDB, SnapshotsDB}, undefined};
+        false ->
+            Num = clocksi_readitem_fsm:start_read_servers(element(2, OpsDB), element(2, SnapshotsDB),
+                Partition, ?READ_CONCURRENCY),
+            {ok, #state{partition = Partition,
+                prepared_tx = PreparedTx,
+                committed_tx = CommittedTx,
+                read_servers = Num,
+                prepared_dict = orddict:new(),
+                ops_db = element(2, OpsDB),
+                snapshots_db = element(2, SnapshotsDB)}}
+    end.
 
 
 %% @doc The table holding the prepared transactions is shared with concurrent
@@ -301,14 +317,16 @@ handle_command({single_commit, Transaction, WriteSet}, _Sender,
     State = #state{partition = _Partition,
         committed_tx = CommittedTx,
         prepared_tx = PreparedTx,
-	prepared_dict = PreparedDict
+	prepared_dict = PreparedDict,
+        ops_db = OpsDB,
+        snapshots_db = SnapshotsDB
     }) ->
     PrepareTime = now_microsec(dc_utilities:now()),
     {Result, NewPrepare, NewPreparedDict} = prepare(Transaction, WriteSet, CommittedTx, PreparedTx, PrepareTime, PreparedDict),
     NewState = State#state{prepared_dict = NewPreparedDict},
     case Result of
         {ok, _} ->
-            ResultCommit = commit(Transaction, NewPrepare, WriteSet, CommittedTx, NewState),
+            ResultCommit = commit(OpsDB, SnapshotsDB, Transaction, NewPrepare, WriteSet, CommittedTx, NewState),
             case ResultCommit of
                 {ok, committed, NewPreparedDict2} ->
                     {reply, {committed, NewPrepare}, NewState#state{prepared_dict = NewPreparedDict2}};
@@ -333,9 +351,11 @@ handle_command({single_commit, Transaction, WriteSet}, _Sender,
 %% eventually.
 handle_command({commit, Transaction, TxCommitTime, Updates}, _Sender,
     #state{partition = _Partition,
-        committed_tx = CommittedTx
+        committed_tx = CommittedTx,
+        ops_db = OpsDB,
+        snapshots_db = SnapshotsDB
     } = State) ->
-    Result = commit(Transaction, TxCommitTime, Updates, CommittedTx, State),
+    Result = commit(OpsDB, SnapshotsDB, Transaction, TxCommitTime, Updates, CommittedTx, State),
     case Result of
         {ok, committed, NewPreparedDict} ->
             {reply, committed, State#state{prepared_dict = NewPreparedDict}};
@@ -376,6 +396,10 @@ handle_command({get_active_txns}, _Sender,
     #state{partition = Partition} = State) ->
     {reply, get_active_txns_internal(Partition), State};
 
+handle_command(get_dbs, _Sender,
+    #state{ops_db = OpsDB, snapshots_db = SnapshotsDB} = State) ->
+    {reply, {OpsDB, SnapshotsDB}, State};
+
 handle_command(_Message, _Sender, State) ->
     {noreply, State}.
 
@@ -409,13 +433,15 @@ handle_coverage(_Req, _KeySpaces, _Sender, State) ->
 handle_exit(_Pid, _Reason, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{partition = Partition} = _State) ->
+terminate(_Reason, #state{ops_db = OpsDB, snapshots_db = SnapshotsDB, partition = Partition} = _State) ->
     try
         ets:delete(get_cache_name(Partition, prepared))
     catch
         _:Reason ->
             lager:error("Error closing table ~p", [Reason])
     end,
+    antidote_leveldb:close(OpsDB),
+    antidote_leveldb:close(SnapshotsDB),
     clocksi_readitem_fsm:stop_read_servers(Partition, ?READ_CONCURRENCY),
     ok.
 
@@ -471,7 +497,7 @@ reset_prepared(PreparedTx, [{Key, _Type, {_Op, _Actor}} | Rest], TxId, Time, Act
     true = ets:insert(PreparedTx, {Key, [{TxId, Time} | dict:fetch(Key, ActiveTxs)]}),
     reset_prepared(PreparedTx, Rest, TxId, Time, ActiveTxs).
 
-commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
+commit(OpsDB, SnapshotsDB, Transaction, TxCommitTime, Updates, CommittedTx, State) ->
     TxId = Transaction#transaction.txn_id,
     DcId = dc_utilities:get_my_dc_id(),
     LogRecord = #log_record{tx_id = TxId,
@@ -491,7 +517,7 @@ commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
             [Node] = log_utilities:get_preflist_from_key(Key),
             case logging_vnode:append_commit(Node, LogId, LogRecord) of
                 {ok, _} ->
-                    case update_materializer(Updates, Transaction, TxCommitTime) of
+                    case update_materializer(OpsDB, SnapshotsDB, Updates, Transaction, TxCommitTime) of
                         ok ->
                             NewPreparedDict = clean_and_notify(TxId, Updates, State),
                             {ok, committed, NewPreparedDict};
@@ -508,18 +534,18 @@ commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
 %% @doc clean_and_notify:
 %%      This function is used for cleanning the state a transaction
 %%      stores in the vnode while it is being procesed. Once a
-%%      transaction commits or aborts, it is necessary to clean the 
+%%      transaction commits or aborts, it is necessary to clean the
 %%      prepared record of a transaction T. There are three possibility
 %%      when trying to clean a record:
 %%      1. The record is prepared by T (with T's TxId).
-%%          If T is being committed, this is the normal. If T is being 
-%%          aborted, it means T successfully prepared here, but got 
+%%          If T is being committed, this is the normal. If T is being
+%%          aborted, it means T successfully prepared here, but got
 %%          aborted somewhere else.
 %%          In both cases, we should remove the record.
 %%      2. The record is empty.
 %%          This can only happen when T is being aborted. What can only
 %%          only happen is as follows: when T tried to prepare, someone
-%%          else has already prepared, which caused T to abort. Then 
+%%          else has already prepared, which caused T to abort. Then
 %%          before the partition receives the abort message of T, the
 %%          prepared transaction gets processed and the prepared record
 %%          is removed.
@@ -527,7 +553,7 @@ commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
 %%      3. The record is prepared by another transaction M.
 %%          This can only happen when T is being aborted. We can not
 %%          remove M's prepare record, so we should not do anything
-%%          either. 
+%%          either.
 clean_and_notify(TxId, Updates, #state{
     prepared_tx = PreparedTx, prepared_dict = PreparedDict}) ->
     ok = clean_prepared(PreparedTx, Updates, TxId),
@@ -606,10 +632,10 @@ check_prepared(TxId, PreparedTx, Key) ->
     end.
 -endif.
 
--spec update_materializer(DownstreamOps :: [{key(), type(), op()}],
+-spec update_materializer(eleveldb:db_ref(), eleveldb:db_ref(), DownstreamOps :: [{key(), type(), op()}],
     Transaction :: tx(), TxCommitTime :: {term(), term()}) ->
     ok | error.
-update_materializer(DownstreamOps, Transaction, TxCommitTime) ->
+update_materializer(OpsDB, SnapshotsDB, DownstreamOps, Transaction, TxCommitTime) ->
     DcId = dc_utilities:get_my_dc_id(),
     ReversedDownstreamOps = lists:reverse(DownstreamOps),
     UpdateFunction = fun({Key, Type, Op}, AccIn) ->
@@ -621,7 +647,7 @@ update_materializer(DownstreamOps, Transaction, TxCommitTime) ->
 				    snapshot_time = Transaction#transaction.vec_snapshot_time,
 				    commit_time = {DcId, TxCommitTime},
 				    txid = Transaction#transaction.txn_id},
-			     [materializer_vnode:update(Key, CommittedDownstreamOp) | AccIn]
+			     [materializer_vnode:update(OpsDB, SnapshotsDB, Key, CommittedDownstreamOp) | AccIn]
 		     end,
     Results = lists:foldl(UpdateFunction, [], ReversedDownstreamOps),
     Failures = lists:filter(fun(Elem) -> Elem /= ok end, Results),
@@ -663,6 +689,12 @@ get_time([{Time,TxId} | Rest], TxIdCheck) ->
 	false ->
 	    get_time(Rest, TxIdCheck)
     end.
+
+get_dbs(Partition) ->
+    riak_core_vnode_master:sync_command({Partition, node()},
+        get_dbs,
+        clocksi_vnode_master,
+        infinity).
 
 -ifdef(TEST).
 

@@ -28,7 +28,7 @@
 -endif.
 
 %% API
--export([start_link/2]).
+-export([start_link/4]).
 
 %% Callbacks
 -export([init/1,
@@ -44,14 +44,16 @@
 %% States
 -export([read_data_item/4,
 	 check_partition_ready/3,
-	 start_read_servers/2,
+	 start_read_servers/4,
 	 stop_read_servers/2]).
 
 %% Spawn
 -record(state, {partition :: partition_id(),
 		id :: non_neg_integer(),
 		prepared_cache :: cache_id(),
-		self :: atom()}).
+		self :: atom(),
+        ops_db :: eleveldb:db_ref(),
+        snapshots_db :: eleveldb:db_ref()}).
 
 %%%===================================================================
 %%% API
@@ -64,15 +66,15 @@
 %%      reading from ets tables shared by the clock_si and materializer
 %%      vnodes, they should be started on the same physical nodes as
 %%      the vnodes with the same partition.
--spec start_link(partition_id(),non_neg_integer()) -> {ok, pid()} | ignore | {error, term()}.
-start_link(Partition,Id) ->
+-spec start_link(eleveldb:db_ref(), eleveldb:db_ref(), partition_id(),non_neg_integer()) -> {ok, pid()} | ignore | {error, term()}.
+start_link(OpsDB, SnapshotsDB, Partition,Id) ->
     Addr = node(),
-    gen_server:start_link({global,generate_server_name(Addr,Partition,Id)}, ?MODULE, [Partition,Id], []).
+    gen_server:start_link({global,generate_server_name(Addr,Partition,Id)}, ?MODULE, [OpsDB, SnapshotsDB, Partition,Id], []).
 
--spec start_read_servers(partition_id(),non_neg_integer()) -> non_neg_integer().
-start_read_servers(Partition, Count) ->
+-spec start_read_servers(eleveldb:db_ref(), eleveldb:db_ref(), partition_id(),non_neg_integer()) -> non_neg_integer().
+start_read_servers(OpsDB, SnapshotsDB, Partition, Count) ->
     Addr = node(),
-    start_read_servers_internal(Addr, Partition, Count).
+    start_read_servers_internal(OpsDB, SnapshotsDB, Addr, Partition, Count).
 
 -spec stop_read_servers(partition_id(),non_neg_integer()) -> ok.
 stop_read_servers(Partition, Count) ->
@@ -132,11 +134,11 @@ check_partition_ready(Node,Partition,Num) ->
 %%% Internal
 %%%===================================================================
 
-start_read_servers_internal(_Node,_Partition,0) ->
+start_read_servers_internal(_OpsDB, _SnapshotsDB, _Node,_Partition,0) ->
     0;
-start_read_servers_internal(Node, Partition, Num) ->
-    {ok,_Id} = clocksi_readitem_sup:start_fsm(Partition,Num),
-    start_read_servers_internal(Node, Partition, Num-1).
+start_read_servers_internal(OpsDB, SnapshotsDB, Node, Partition, Num) ->
+    {ok,_Id} = clocksi_readitem_sup:start_fsm(OpsDB, SnapshotsDB, Partition,Num),
+    start_read_servers_internal(OpsDB, SnapshotsDB, Node, Partition, Num-1).
 
 stop_read_servers_internal(_Node,_Partition,0) ->
     ok;
@@ -156,33 +158,33 @@ generate_server_name(Node, Partition, Id) ->
 generate_random_server_name(Node, Partition) ->
     generate_server_name(Node, Partition, random:uniform(?READ_CONCURRENCY)).
 
-init([Partition, Id]) ->
+init([OpsDB, SnapshotsDB, Partition, Id]) ->
     Addr = node(),
     PreparedCache = clocksi_vnode:get_cache_name(Partition,prepared),
     Self = generate_server_name(Addr,Partition,Id),
-    {ok, #state{partition=Partition, id=Id, prepared_cache=PreparedCache,self=Self}}.
+    {ok, #state{ops_db = OpsDB, snapshots_db = SnapshotsDB, partition=Partition, id=Id, prepared_cache=PreparedCache,self=Self}}.
 
 handle_call({perform_read, Key, Type, Transaction},Coordinator,
-	    SD0=#state{prepared_cache=PreparedCache,partition=Partition}) ->
-    ok = perform_read_internal(Coordinator, Key, Type, Transaction, PreparedCache, Partition),
+	    SD0=#state{ops_db = OpsDB, snapshots_db = SnapshotsDB,prepared_cache=PreparedCache,partition=Partition}) ->
+    ok = perform_read_internal(OpsDB, SnapshotsDB, Coordinator, Key, Type, Transaction, PreparedCache, Partition),
     {noreply, SD0};
 
 handle_call({go_down},_Sender,SD0) ->
     {stop,shutdown,ok,SD0}.
 
 handle_cast({perform_read_cast, Coordinator, Key, Type, Transaction},
-	    SD0=#state{prepared_cache=PreparedCache,partition=Partition}) ->
-    ok = perform_read_internal(Coordinator,Key,Type,Transaction,PreparedCache,Partition),
+	    SD0=#state{ops_db = OpsDB, snapshots_db = SnapshotsDB, prepared_cache=PreparedCache,partition=Partition}) ->
+    ok = perform_read_internal(OpsDB, SnapshotsDB, Coordinator,Key,Type,Transaction,PreparedCache,Partition),
     {noreply,SD0}.
 
-perform_read_internal(Coordinator,Key,Type,Transaction,PreparedCache,Partition) ->
+perform_read_internal(OpsDB, SnapshotsDB, Coordinator,Key,Type,Transaction,PreparedCache,Partition) ->
     case check_clock(Key,Transaction,PreparedCache,Partition) of
 	{not_ready,Time} ->
 	    %% spin_wait(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,PreparedCache,Self);
 	    _Tref = erlang:send_after(Time, self(), {perform_read_cast,Coordinator,Key,Type,Transaction}),
 	    ok;
 	ready ->
-	    return(Coordinator,Key,Type,Transaction,Partition)
+	    return(OpsDB, SnapshotsDB, Coordinator,Key,Type,Transaction,Partition)
     end.
 
 %% @doc check_clock: Compares its local clock with the tx timestamp.
@@ -221,10 +223,10 @@ check_prepared_list(Key,SnapshotTime,[{_TxId,Time}|Rest]) ->
 
 %% @doc return:
 %%  - Reads and returns the log of specified Key using replication layer.
-return(Coordinator,Key,Type,Transaction,Partition) ->
+return(OpsDB, SnapshotsDB,Coordinator,Key,Type,Transaction,Partition) ->
     VecSnapshotTime = Transaction#transaction.vec_snapshot_time,
     TxId = Transaction#transaction.txn_id,
-    case materializer_vnode:read(Key, Type, VecSnapshotTime, TxId, Partition) of
+    case materializer_vnode:read(OpsDB, SnapshotsDB, Key, Type, VecSnapshotTime, TxId, Partition) of
         {ok, Snapshot} ->
             Reply={ok, Snapshot};
         {error, Reason} ->
@@ -235,8 +237,8 @@ return(Coordinator,Key,Type,Transaction,Partition) ->
 
 
 handle_info({perform_read_cast, Coordinator, Key, Type, Transaction},
-	    SD0=#state{prepared_cache=PreparedCache,partition=Partition}) ->
-    ok = perform_read_internal(Coordinator,Key,Type,Transaction,PreparedCache,Partition),
+	    SD0=#state{ops_db = OpsDB, snapshots_db = SnapshotsDB, prepared_cache=PreparedCache,partition=Partition}) ->
+    ok = perform_read_internal(OpsDB, SnapshotsDB, Coordinator,Key,Type,Transaction,PreparedCache,Partition),
     {noreply,SD0};
 
 handle_info(_Info, StateData) ->
