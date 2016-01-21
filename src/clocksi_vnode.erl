@@ -246,6 +246,12 @@ open_table(Partition) ->
 	_ ->
 	    %% Other vnode hasn't finished closing tables
 	    timer:sleep(100),
+	    try
+		ets:delete(get_cache_name(Partition, prepared))
+	    catch
+		_:_Reason->
+		    ok
+	    end,
 	    open_table(Partition)
     end.
 
@@ -473,7 +479,7 @@ reset_prepared(PreparedTx, [{Key, _Type, {_Op, _Actor}} | Rest], TxId, Time, Act
     true = ets:insert(PreparedTx, {Key, [{TxId, Time} | dict:fetch(Key, ActiveTxs)]}),
     reset_prepared(PreparedTx, Rest, TxId, Time, ActiveTxs).
 
-commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
+commit(Transaction, TxCommitTime, Updates, _CommittedTx, State) ->
     TxId = Transaction#transaction.txn_id,
     DcId = dc_utilities:get_my_dc_id(),
     LogRecord = #log_record{tx_id = TxId,
@@ -482,13 +488,13 @@ commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
             Transaction#transaction.vec_snapshot_time}},
     case Updates of
         [{Key, _Type, {_Op, _Param}} | _Rest] ->
-	    case application:get_env(antidote,txn_cert) of
-		{ok, true} ->
-		    lists:foreach(fun({K, _, _}) -> true = ets:insert(CommittedTx, {K, TxCommitTime}) end,
-				  Updates);
-		_ ->
-		    ok
-	    end,
+	    %% case application:get_env(antidote,txn_cert) of
+	    %% 	{ok, true} ->
+	    %% 	    lists:foreach(fun({K, _, _}) -> true = ets:insert(CommittedTx, {K, TxCommitTime}) end,
+	    %% 			  Updates);
+	    %% 	_ ->
+	    %% 	    ok
+	    %% end,
             LogId = log_utilities:get_logid_from_key(Key),
             [Node] = log_utilities:get_preflist_from_key(Key),
             case logging_vnode:append_commit(Node, LogId, LogRecord) of

@@ -212,8 +212,13 @@ handle_exit(_Pid, _Reason, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State=#state{ops_cache=OpsCache,snapshot_cache=SnapshotCache}) ->
-    ets:delete(OpsCache),
-    ets:delete(SnapshotCache),
+    try
+	ets:delete(OpsCache),
+	ets:delete(SnapshotCache)
+    catch
+	_:_Reason->
+	    ok
+    end,
     ok.
 
 
@@ -265,10 +270,20 @@ internal_read(Key, Type, MinSnapshotTime, TxId, OpsCache, SnapshotCache,ShouldGc
     {Length,Ops,{LastOp,LatestSnapshot},SnapshotCommitTime,IsFirst} =
 	case Result of
 	    {error, no_snapshot} ->
-		LogId = log_utilities:get_logid_from_key(Key),
-		[Node] = log_utilities:get_preflist_from_key(Key),
-		Res = logging_vnode:get(Node, {get, LogId, MinSnapshotTime, Type, Key}),
-		Res;
+		%% lager:info("should go to disk"),
+		%% LogId = log_utilities:get_logid_from_key(Key),
+		%% [Node] = log_utilities:get_preflist_from_key(Key),
+		%% Res = logging_vnode:get(Node, {get, LogId, MinSnapshotTime, Type, Key}),
+		%% Res;
+		%% This is wrong and only to prevent overflow!!!
+		{ok, SSTime} = vectorclock:get_stable_snapshot(),
+		case ets:lookup(OpsCache, Key) of
+		    [] ->
+			{0, [], {0, clocksi_materializer:new(Type)}, SSTime, true};
+		    [Tuple] ->
+			{Key,Length1,_OpId,AllOps} = tuple_to_key(Tuple),
+			{Length1, AllOps, {0, clocksi_materializer:new(Type)}, SSTime, true}
+		end;
 	    {LatestSnapshot1,SnapshotCommitTime1,IsFirst1} ->
 		case ets:lookup(OpsCache, Key) of
 		    [] ->
@@ -289,6 +304,13 @@ internal_read(Key, Type, MinSnapshotTime, TxId, OpsCache, SnapshotCache,ShouldGc
 		    %% But is the snapshot not safe?
 		    case CommitTime of
 			ignore ->
+			    %% This is not correct, just to check if overflow!!!
+			    case ShouldGc of
+				true ->
+				    internal_store_ss(Key,{NewLastOp,Snapshot},CommitTime,OpsCache,SnapshotCache,ShouldGc);
+				false ->
+				    ok
+			    end,
 			    {ok, Snapshot};
 			_ ->
 			    case (NewSS and IsFirst) orelse ShouldGc of
@@ -345,7 +367,14 @@ snapshot_insert_gc(Key, SnapshotDict, SnapshotCache, OpsCache,ShouldGc)->
 				    end,
             {NewLength,PrunedOps}=prune_ops({Length,OpsDict}, CommitTime),
             ets:insert(SnapshotCache, {Key, PrunedSnapshots}),
-	    true = ets:insert(OpsCache, erlang:make_tuple(?FIRST_OP+?OPS_THRESHOLD,0,[{1,Key},{2,NewLength},{3,OpId}|PrunedOps]));
+
+	    %% This is wrong and only to prevent overflow!!
+	    case NewLength > (?OPS_THRESHOLD div 2) of
+		true ->
+		    true = ets:insert(OpsCache, erlang:make_tuple(?FIRST_OP+?OPS_THRESHOLD,0,[{1,Key},{2,0},{3,OpId}]));
+		false ->
+		    true = ets:insert(OpsCache, erlang:make_tuple(?FIRST_OP+?OPS_THRESHOLD,0,[{1,Key},{2,NewLength},{3,OpId}|PrunedOps]))
+	    end;
         false ->
             true = ets:insert(SnapshotCache, {Key, SnapshotDict})
     end.
