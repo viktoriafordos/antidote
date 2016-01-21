@@ -43,8 +43,8 @@ get_descriptor() ->
   %% Wait until all needed vnodes are spawned, so that the heartbeats are already being sent
   ok = dc_utilities:ensure_all_vnodes_running_master(inter_dc_log_sender_vnode_master),
   Nodes = dc_utilities:get_my_dc_nodes(),
-  Publishers = lists:map(fun(Node) -> rpc:call(Node, inter_dc_pub, get_address, []) end, Nodes),
-  LogReaders = lists:map(fun(Node) -> rpc:call(Node, inter_dc_log_reader_response, get_address, []) end, Nodes),
+  Publishers = lists:map(fun(Node) -> rpc:call(Node, inter_dc_pub, get_address_list, []) end, Nodes),
+  LogReaders = lists:map(fun(Node) -> rpc:call(Node, inter_dc_log_reader_response, get_address_list, []) end, Nodes),
   {ok, #descriptor{
     dcid = dc_utilities:get_my_dc_id(),
     partition_num = dc_utilities:get_partitions_num(),
@@ -63,39 +63,67 @@ start_bg_processes(Name) ->
     _ = dc_utilities:bcast_vnode_sync(inter_dc_log_sender_vnode_master, {start_timer}),
     ok.
 
--spec observe_dc(#descriptor{}) -> ok.
-observe_dc(#descriptor{dcid = DCID, partition_num = PartitionsNumRemote, publishers = Publishers, logreaders = LogReaders}) ->
-  PartitionsNumLocal = dc_utilities:get_partitions_num(),
-  case PartitionsNumRemote == PartitionsNumLocal of
-    false ->
-      lager:error("Cannot observe remote DC: partition number mismatch"),
-      {error, {partition_num_mismatch, PartitionsNumRemote, PartitionsNumLocal}};
-    true ->
-      case DCID == dc_utilities:get_my_dc_id() of
-        true -> ok;
-        false ->
-          lager:info("Observing DC ~p", [DCID]),
-          dc_utilities:ensure_all_vnodes_running_master(inter_dc_log_sender_vnode_master),
-          %% Announce the new publisher addresses to all subscribers in this DC.
-          %% Equivalently, we could just pick one node in the DC and delegate all the subscription work to it.
-          %% But we want to balance the work, so all nodes take part in subscribing.
-          Nodes = dc_utilities:get_my_dc_nodes(),
-          lists:foreach(fun(Node) -> ok = rpc:call(Node, inter_dc_log_reader_query, add_dc, [DCID, LogReaders]) end, Nodes),
-          lists:foreach(fun(Node) -> ok = rpc:call(Node, inter_dc_sub, add_dc, [DCID, Publishers]) end, Nodes)
-      end
-  end.
 
--spec observe_dcs([#descriptor{}]) -> ok.
-observe_dcs(Descriptors) -> lists:foreach(fun observe_dc/1, Descriptors).
+-spec observe_dc(#descriptor{}) -> ok | inter_dc_conn_err().
+observe_dc(Desc = #descriptor{dcid = DCID, partition_num = PartitionsNumRemote, publishers = Publishers, logreaders = LogReaders}) ->
+    PartitionsNumLocal = dc_utilities:get_partitions_num(),
+    case PartitionsNumRemote == PartitionsNumLocal of
+	false ->
+	    lager:error("Cannot observe remote DC: partition number mismatch"),
+	    {error, {partition_num_mismatch, PartitionsNumRemote, PartitionsNumLocal}};
+	true ->
+	    case DCID == dc_utilities:get_my_dc_id() of
+		true -> ok;
+		false ->
+		    lager:info("Observing DC ~p", [DCID]),
+		    dc_utilities:ensure_all_vnodes_running_master(inter_dc_log_sender_vnode_master),
+		    %% Announce the new publisher addresses to all subscribers in this DC.
+		    %% Equivalently, we could just pick one node in the DC and delegate all the subscription work to it.
+		    %% But we want to balance the work, so all nodes take part in subscribing.
+		    Nodes = dc_utilities:get_my_dc_nodes(),
+		    connect_nodes(Nodes, DCID, LogReaders, Publishers, Desc)
+	    end
+    end.
 
--spec observe_dcs_sync([#descriptor{}]) -> ok.
+-spec connect_nodes([node()], dcid(), [socket_address()], [socket_address()], #descriptor{}) -> ok | {error, connection_error}.
+connect_nodes([], _DCID, _LogReaders, _Publishers, _Desc) ->
+    ok;
+connect_nodes([Node|Rest], DCID, LogReaders, Publishers, Desc) ->
+    case rpc:call(Node, inter_dc_log_reader_query, add_dc, [DCID, LogReaders], ?COMM_TIMEOUT) of
+	ok ->
+	    case rpc:call(Node, inter_dc_sub, add_dc, [DCID, Publishers], ?COMM_TIMEOUT) of
+		ok ->
+		    connect_nodes(Rest, DCID, LogReaders, Publishers, Desc);
+		_ ->
+		    lager:error("Unable to connect to publisher ~p", [DCID]),
+		    ok = forget_dc(Desc),
+		    {error, connection_error}
+	    end;
+	_ ->
+	    lager:error("Unable to connect to log reader ~p", [DCID]),
+	    ok = forget_dc(Desc),
+	    {error, connection_error}
+    end.
+
+-spec observe_dcs([#descriptor{}]) -> [ok | inter_dc_conn_err()].
+observe_dcs(Descriptors) -> lists:map(fun observe_dc/1, Descriptors).
+
+-spec observe_dcs_sync([#descriptor{}]) -> [ok | inter_dc_conn_err()].
 observe_dcs_sync(Descriptors) ->
-  {ok, SS} = vectorclock:get_stable_snapshot(),
-  observe_dcs(Descriptors),
-  lists:foreach(fun(#descriptor{dcid = DCID}) ->
-    Value = vectorclock:get_clock_of_dc(DCID, SS),
-    wait_for_stable_snapshot(DCID, Value)
-  end, Descriptors).
+    {ok, SS} = vectorclock:get_stable_snapshot(),
+    DCs = lists:map(fun(DC) ->
+			    {observe_dc(DC), DC}
+		    end, Descriptors),
+    lists:foreach(fun({Res, #descriptor{dcid = DCID}}) ->
+			  case Res of
+			      ok ->
+				  Value = vectorclock:get_clock_of_dc(DCID, SS),
+				  wait_for_stable_snapshot(DCID, Value);
+			      _ ->
+				  ok
+			  end
+		  end, DCs),
+    [Result1 || {Result1, _DC1} <- DCs].
 
 -spec add_network_delays([{#descriptor{}, non_neg_integer()}]) -> ok.
 add_network_delays(Descriptors) ->
@@ -106,8 +134,10 @@ add_network_delay({#descriptor{dcid = DCID}, Delay}) ->
     lager:info("Adding network delay ~p ms to DC ~p", [Delay, DCID]),
     dc_utilities:bcast_vnode_sync(inter_dc_sub_vnode_master, {add_delay, DCID, Delay}).
 
--spec observe_dc_sync(#descriptor{}) -> ok.
-observe_dc_sync(Descriptor) -> observe_dcs_sync([Descriptor]).
+-spec observe_dc_sync(#descriptor{}) -> ok | inter_dc_conn_err().
+observe_dc_sync(Descriptor) ->
+    [Res] = observe_dcs_sync([Descriptor]),
+    Res.
 
 -spec forget_dc(#descriptor{}) -> ok.
 forget_dc(#descriptor{dcid = DCID}) ->
