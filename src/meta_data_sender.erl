@@ -371,7 +371,7 @@ get_node_and_partition_list() ->
     %% safe can cause inconsistencies under concurrency, so this should
     %% be done differently
     %% Resize = riak_core_ring:is_resizing(Ring) or riak_core_ring:is_post_resize(Ring) or riak_core_ring:is_resize_complete(Ring),
-    Resize = true,
+    Resize = false,
     {NodeList,PartitionList,Resize}.
 
 get_name(Name,TableName) ->
