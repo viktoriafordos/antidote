@@ -70,7 +70,8 @@
     prepared_tx :: cache_id(),
     committed_tx :: cache_id(),
     read_servers :: non_neg_integer(),
-    prepared_dict :: list()}).
+    prepared_dict :: list(),
+    antidote_db :: antidote_db:antidote_db()}).
 
 %%%===================================================================
 %%% API
@@ -199,19 +200,31 @@ abort(ListofNodes, TxId) ->
 get_cache_name(Partition, Base) ->
     list_to_atom(atom_to_list(node()) ++ atom_to_list(Base) ++ "-" ++ integer_to_list(Partition)).
 
+get_db_name(Base, Partition) ->
+    atom_to_list(Base) ++ "-" ++ integer_to_list(Partition).
 
 %% @doc Initializes all data structures that vnode needs to track information
 %%      the transactions it participates on.
 init([Partition]) ->
     PreparedTx = open_table(Partition),
     CommittedTx = ets:new(committed_tx, [set]),
-    Num = clocksi_readitem_fsm:start_read_servers(Partition, ?READ_CONCURRENCY),
-    {ok, #state{partition = Partition,
-        prepared_tx = PreparedTx,
-        committed_tx = CommittedTx,
-        read_servers = Num,
-        prepared_dict = orddict:new()}}.
 
+    AntidoteDB = antidote_db:new(get_db_name(antidote_db, Partition)),
+
+    %% Check if there where any errors while opening the DB
+    case (element(1, AntidoteDB) == error) of
+        true ->
+            {stop, {error, AntidoteDB}, undefined};
+        false ->
+            DB = element(2, AntidoteDB),
+            Num = clocksi_readitem_fsm:start_read_servers(DB, Partition, ?READ_CONCURRENCY),
+            {ok, #state{partition = Partition,
+                prepared_tx = PreparedTx,
+                committed_tx = CommittedTx,
+                read_servers = Num,
+                prepared_dict = orddict:new(),
+                antidote_db = DB}}
+    end.
 
 %% @doc The table holding the prepared transactions is shared with concurrent
 %%      readers, so they can safely check if a key they are reading is being updated.
@@ -249,11 +262,11 @@ open_table(Partition) ->
 	    open_table(Partition)
     end.
 
-loop_until_started(_Partition, 0) ->
+loop_until_started(_AntidoteDB, _Partition, 0) ->
     0;
-loop_until_started(Partition, Num) ->
-    Ret = clocksi_readitem_fsm:start_read_servers(Partition, Num),
-    loop_until_started(Partition, Ret).
+loop_until_started(AntidoteDB, Partition, Num) ->
+    Ret = clocksi_readitem_fsm:start_read_servers(AntidoteDB, artition, Num),
+    loop_until_started(AntidoteDB, Partition, Ret).
 
 
 handle_command({check_tables_ready}, _Sender, SD0 = #state{partition = Partition}) ->
@@ -269,8 +282,8 @@ handle_command(get_min_prepared, _Sender,
 	       State = #state{prepared_dict = PreparedDict}) ->
     {reply, get_min_prep(PreparedDict), State};
 
-handle_command({check_servers_ready}, _Sender, SD0 = #state{partition = Partition, read_servers = Serv}) ->
-    loop_until_started(Partition, Serv),
+handle_command({check_servers_ready}, _Sender, SD0 = #state{partition = Partition, read_servers = Serv, antidote_db = AntidoteDB}) ->
+    loop_until_started(AntidoteDB, Partition, Serv),
     Node = node(),
     Result = clocksi_readitem_fsm:check_partition_ready(Node, Partition, ?READ_CONCURRENCY),
     {reply, Result, SD0};
@@ -279,7 +292,7 @@ handle_command({prepare, Transaction, WriteSet}, _Sender,
     State = #state{partition = _Partition,
         committed_tx = CommittedTx,
         prepared_tx = PreparedTx,
-	prepared_dict = PreparedDict
+        prepared_dict = PreparedDict
     }) ->
     PrepareTime = now_microsec(dc_utilities:now()),
     {Result, NewPrepare, NewPreparedDict} = prepare(Transaction, WriteSet, CommittedTx, PreparedTx, PrepareTime, PreparedDict),
@@ -301,14 +314,15 @@ handle_command({single_commit, Transaction, WriteSet}, _Sender,
     State = #state{partition = _Partition,
         committed_tx = CommittedTx,
         prepared_tx = PreparedTx,
-	prepared_dict = PreparedDict
+	    prepared_dict = PreparedDict,
+        antidote_db = AntidoteDB
     }) ->
     PrepareTime = now_microsec(dc_utilities:now()),
     {Result, NewPrepare, NewPreparedDict} = prepare(Transaction, WriteSet, CommittedTx, PreparedTx, PrepareTime, PreparedDict),
     NewState = State#state{prepared_dict = NewPreparedDict},
     case Result of
         {ok, _} ->
-            ResultCommit = commit(Transaction, NewPrepare, WriteSet, CommittedTx, NewState),
+            ResultCommit = commit(AntidoteDB, Transaction, NewPrepare, WriteSet, CommittedTx, NewState),
             case ResultCommit of
                 {ok, committed, NewPreparedDict2} ->
                     {reply, {committed, NewPrepare}, NewState#state{prepared_dict = NewPreparedDict2}};
@@ -333,9 +347,10 @@ handle_command({single_commit, Transaction, WriteSet}, _Sender,
 %% eventually.
 handle_command({commit, Transaction, TxCommitTime, Updates}, _Sender,
     #state{partition = _Partition,
-        committed_tx = CommittedTx
+        committed_tx = CommittedTx,
+        antidote_db = AntidoteDB
     } = State) ->
-    Result = commit(Transaction, TxCommitTime, Updates, CommittedTx, State),
+    Result = commit(AntidoteDB, Transaction, TxCommitTime, Updates, CommittedTx, State),
     case Result of
         {ok, committed, NewPreparedDict} ->
             {reply, committed, State#state{prepared_dict = NewPreparedDict}};
@@ -411,13 +426,14 @@ handle_coverage(_Req, _KeySpaces, _Sender, State) ->
 handle_exit(_Pid, _Reason, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{partition = Partition} = _State) ->
+terminate(_Reason, #state{partition = Partition, antidote_db = AntidoteDB} = _State) ->
     try
         ets:delete(get_cache_name(Partition, prepared))
     catch
         _:Reason ->
             lager:error("Error closing table ~p", [Reason])
     end,
+    antidote_db:close(AntidoteDB),
     clocksi_readitem_fsm:stop_read_servers(Partition, ?READ_CONCURRENCY),
     ok.
 
@@ -473,7 +489,7 @@ reset_prepared(PreparedTx, [{Key, _Type, {_Op, _Actor}} | Rest], TxId, Time, Act
     true = ets:insert(PreparedTx, {Key, [{TxId, Time} | dict:fetch(Key, ActiveTxs)]}),
     reset_prepared(PreparedTx, Rest, TxId, Time, ActiveTxs).
 
-commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
+commit(AntidoteDB, Transaction, TxCommitTime, Updates, CommittedTx, State) ->
     TxId = Transaction#transaction.txn_id,
     DcId = dc_utilities:get_my_dc_id(),
     LogRecord = #log_record{tx_id = TxId,
@@ -493,7 +509,7 @@ commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
             [Node] = log_utilities:get_preflist_from_key(Key),
             case logging_vnode:append_commit(Node, LogId, LogRecord) of
                 {ok, _} ->
-                    case update_materializer(Updates, Transaction, TxCommitTime) of
+                    case update_materializer(AntidoteDB, Updates, Transaction, TxCommitTime) of
                         ok ->
                             NewPreparedDict = clean_and_notify(TxId, Updates, State),
                             {ok, committed, NewPreparedDict};
@@ -510,18 +526,18 @@ commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
 %% @doc clean_and_notify:
 %%      This function is used for cleanning the state a transaction
 %%      stores in the vnode while it is being procesed. Once a
-%%      transaction commits or aborts, it is necessary to clean the 
+%%      transaction commits or aborts, it is necessary to clean the
 %%      prepared record of a transaction T. There are three possibility
 %%      when trying to clean a record:
 %%      1. The record is prepared by T (with T's TxId).
-%%          If T is being committed, this is the normal. If T is being 
-%%          aborted, it means T successfully prepared here, but got 
+%%          If T is being committed, this is the normal. If T is being
+%%          aborted, it means T successfully prepared here, but got
 %%          aborted somewhere else.
 %%          In both cases, we should remove the record.
 %%      2. The record is empty.
 %%          This can only happen when T is being aborted. What can only
 %%          only happen is as follows: when T tried to prepare, someone
-%%          else has already prepared, which caused T to abort. Then 
+%%          else has already prepared, which caused T to abort. Then
 %%          before the partition receives the abort message of T, the
 %%          prepared transaction gets processed and the prepared record
 %%          is removed.
@@ -529,7 +545,7 @@ commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
 %%      3. The record is prepared by another transaction M.
 %%          This can only happen when T is being aborted. We can not
 %%          remove M's prepare record, so we should not do anything
-%%          either. 
+%%          either.
 clean_and_notify(TxId, Updates, #state{
     prepared_tx = PreparedTx, prepared_dict = PreparedDict}) ->
     ok = clean_prepared(PreparedTx, Updates, TxId),
@@ -564,7 +580,7 @@ now_microsec({MegaSecs, Secs, MicroSecs}) ->
 
 certification_check(TxId, Updates, CommittedTx, PreparedTx) ->
     case application:get_env(antidote, txn_cert) of
-        {ok, true} -> 
+        {ok, true} ->
         io:format("AAAAH"),
         certification_with_check(TxId, Updates, CommittedTx, PreparedTx);
         _  -> true
@@ -608,10 +624,10 @@ check_prepared(TxId, PreparedTx, Key) ->
             false
     end.
 
--spec update_materializer(DownstreamOps :: [{key(), type(), op()}],
+-spec update_materializer(AntidoteDB :: antidote_db:antidote_db(), DownstreamOps :: [{key(), type(), op()}],
     Transaction :: tx(), TxCommitTime :: {term(), term()}) ->
     ok | error.
-update_materializer(DownstreamOps, Transaction, TxCommitTime) ->
+update_materializer(AntidoteDB, DownstreamOps, Transaction, TxCommitTime) ->
     DcId = dc_utilities:get_my_dc_id(),
     ReversedDownstreamOps = lists:reverse(DownstreamOps),
     UpdateFunction = fun({Key, Type, Op}, AccIn) ->
@@ -623,7 +639,7 @@ update_materializer(DownstreamOps, Transaction, TxCommitTime) ->
 				    snapshot_time = Transaction#transaction.vec_snapshot_time,
 				    commit_time = {DcId, TxCommitTime},
 				    txid = Transaction#transaction.txn_id},
-			     [materializer_vnode:update(Key, CommittedDownstreamOp) | AccIn]
+			     [materializer_vnode:update(AntidoteDB, Key, CommittedDownstreamOp) | AccIn]
 		     end,
     Results = lists:foldl(UpdateFunction, [], ReversedDownstreamOps),
     Failures = lists:filter(fun(Elem) -> Elem /= ok end, Results),

@@ -28,7 +28,7 @@
 -endif.
 
 %% API
--export([start_link/2]).
+-export([start_link/3]).
 
 %% Callbacks
 -export([init/1,
@@ -44,14 +44,13 @@
 %% States
 -export([read_data_item/4,
 	 check_partition_ready/3,
-	 start_read_servers/2,
+	 start_read_servers/3,
 	 stop_read_servers/2]).
 
 %% Spawn
 -record(state, {partition :: partition_id(),
 		id :: non_neg_integer(),
-		ops_cache :: cache_id(),
-		snapshot_cache :: cache_id(),
+        antidote_db :: antidote_db:antidote_db(),
 		prepared_cache :: cache_id(),
 		self :: atom()}).
 
@@ -66,15 +65,15 @@
 %%      reading from ets tables shared by the clock_si and materializer
 %%      vnodes, they should be started on the same physical nodes as
 %%      the vnodes with the same partition.
--spec start_link(partition_id(),non_neg_integer()) -> {ok, pid()} | ignore | {error, term()}.
-start_link(Partition,Id) ->
+-spec start_link(antidote_db:antidote_db(), partition_id(),non_neg_integer()) -> {ok, pid()} | ignore | {error, term()}.
+start_link(AntidoteDB, Partition,Id) ->
     Addr = node(),
-    gen_server:start_link({global,generate_server_name(Addr,Partition,Id)}, ?MODULE, [Partition,Id], []).
+    gen_server:start_link({global,generate_server_name(Addr,Partition,Id)}, ?MODULE, [AntidoteDB, Partition,Id], []).
 
--spec start_read_servers(partition_id(),non_neg_integer()) -> non_neg_integer().
-start_read_servers(Partition, Count) ->
+-spec start_read_servers(antidote_db:antidote_db(), partition_id(),non_neg_integer()) -> non_neg_integer().
+start_read_servers(AntidoteDB, Partition, Count) ->
     Addr = node(),
-    start_read_servers_internal(Addr, Partition, Count).
+    start_read_servers_internal(AntidoteDB, Addr, Partition, Count).
 
 -spec stop_read_servers(partition_id(),non_neg_integer()) -> ok.
 stop_read_servers(Partition, Count) ->
@@ -134,11 +133,11 @@ check_partition_ready(Node,Partition,Num) ->
 %%% Internal
 %%%===================================================================
 
-start_read_servers_internal(_Node,_Partition,0) ->
+start_read_servers_internal(_AntidoteDB, _Node,_Partition,0) ->
     0;
-start_read_servers_internal(Node, Partition, Num) ->
-    {ok,_Id} = clocksi_readitem_sup:start_fsm(Partition,Num),
-    start_read_servers_internal(Node, Partition, Num-1).
+start_read_servers_internal(AntidoteDB, Node, Partition, Num) ->
+    {ok,_Id} = clocksi_readitem_sup:start_fsm(AntidoteDB, Partition,Num),
+    start_read_servers_internal(AntidoteDB, Node, Partition, Num-1).
 
 stop_read_servers_internal(_Node,_Partition,0) ->
     ok;
@@ -158,37 +157,34 @@ generate_server_name(Node, Partition, Id) ->
 generate_random_server_name(Node, Partition) ->
     generate_server_name(Node, Partition, random:uniform(?READ_CONCURRENCY)).
 
-init([Partition, Id]) ->
+init([AntidoteDB, Partition, Id]) ->
     Addr = node(),
-    OpsCache = materializer_vnode:get_cache_name(Partition,ops_cache),
-    SnapshotCache = materializer_vnode:get_cache_name(Partition,snapshot_cache),
     PreparedCache = clocksi_vnode:get_cache_name(Partition,prepared),
     Self = generate_server_name(Addr,Partition,Id),
-    {ok, #state{partition=Partition, id=Id, ops_cache=OpsCache,
-		snapshot_cache=SnapshotCache,
-		prepared_cache=PreparedCache,self=Self}}.
+    {ok, #state{partition=Partition, id=Id,
+        antidote_db = AntidoteDB, prepared_cache=PreparedCache,self=Self}}.
 
 handle_call({perform_read, Key, Type, Transaction},Coordinator,
-	    SD0=#state{ops_cache=OpsCache,snapshot_cache=SnapshotCache,prepared_cache=PreparedCache,partition=Partition}) ->
-    ok = perform_read_internal(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,PreparedCache,Partition),
+	    SD0=#state{antidote_db = AntidoteDB, prepared_cache=PreparedCache,partition=Partition}) ->
+    ok = perform_read_internal(Coordinator,Key,Type,Transaction, AntidoteDB,PreparedCache,Partition),
     {noreply,SD0};
 
 handle_call({go_down},_Sender,SD0) ->
     {stop,shutdown,ok,SD0}.
 
 handle_cast({perform_read_cast, Coordinator, Key, Type, Transaction},
-	    SD0=#state{ops_cache=OpsCache,snapshot_cache=SnapshotCache,prepared_cache=PreparedCache,partition=Partition}) ->
-    ok = perform_read_internal(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,PreparedCache,Partition),
+	    SD0=#state{antidote_db = AntidoteDB,prepared_cache=PreparedCache,partition=Partition}) ->
+    ok = perform_read_internal(Coordinator,Key,Type,Transaction,AntidoteDB,PreparedCache,Partition),
     {noreply,SD0}.
 
-perform_read_internal(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,PreparedCache,Partition) ->
+perform_read_internal(Coordinator,Key,Type,Transaction,AntidoteDB,PreparedCache,Partition) ->
     case check_clock(Key,Transaction,PreparedCache,Partition) of
 	{not_ready,Time} ->
 	    %% spin_wait(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,PreparedCache,Self);
 	    _Tref = erlang:send_after(Time, self(), {perform_read_cast,Coordinator,Key,Type,Transaction}),
 	    ok;
 	ready ->
-	    return(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,Partition)
+	    return(Coordinator,Key,Type,Transaction,AntidoteDB,Partition)
     end.
 
 %% @doc check_clock: Compares its local clock with the tx timestamp.
@@ -227,11 +223,11 @@ check_prepared_list(Key,SnapshotTime,[{_TxId,Time}|Rest]) ->
 
 %% @doc return:
 %%  - Reads and returns the log of specified Key using replication layer.
-return(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,Partition) ->
+return(Coordinator,Key,Type,Transaction,AntidoteDB,Partition) ->
     VecSnapshotTime = Transaction#transaction.vec_snapshot_time,
     %%lager:info("Here is the vector snapshot time we'll be reading from: ~p", [VecSnapshotTime]),
     TxId = Transaction#transaction.txn_id,
-    case materializer_vnode:read(Key, Type, VecSnapshotTime, TxId,OpsCache,SnapshotCache, Partition) of
+    case materializer_vnode:read(AntidoteDB, Key, Type, VecSnapshotTime, TxId, Partition) of
         {ok, Snapshot} ->
             Reply={ok, Snapshot};
         {error, Reason} ->
@@ -242,8 +238,8 @@ return(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,Partition) ->
 
 
 handle_info({perform_read_cast, Coordinator, Key, Type, Transaction},
-	    SD0=#state{ops_cache=OpsCache,snapshot_cache=SnapshotCache,prepared_cache=PreparedCache,partition=Partition}) ->
-    ok = perform_read_internal(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,PreparedCache,Partition),
+	    SD0=#state{antidote_db = AntidoteDB,prepared_cache=PreparedCache,partition=Partition}) ->
+    ok = perform_read_internal(Coordinator,Key,Type,Transaction,AntidoteDB,PreparedCache,Partition),
     {noreply,SD0};
 
 handle_info(_Info, StateData) ->

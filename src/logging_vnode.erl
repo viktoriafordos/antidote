@@ -181,7 +181,7 @@ handle_command({read, LogId}, _Sender,
                #state{partition=Partition, logs_map=Map}=State) ->
     case get_log_from_map(Map, Partition, LogId) of
         {ok, Log} ->
-           {Continuation, Ops} = 
+           {Continuation, Ops} =
                 case disk_log:chunk(Log, start) of
                     {C, O} -> {C,O};
                     {C, O, _} -> {C,O};
@@ -208,7 +208,7 @@ handle_command({read_from, LogId, _From}, _Sender,
     case get_log_from_map(Map, Partition, LogId) of
         {ok, Log} ->
             ok = disk_log:sync(Log),
-            {Continuation, Ops} = 
+            {Continuation, Ops} =
                 case disk_log:chunk(Log, Lastread) of
                     {error, Reason} -> {error, Reason};
                     {C, O} -> {C,O};
@@ -245,12 +245,12 @@ handle_command({append, LogId, Payload, Sync}, _Sender,
                   inter_dc_log_sender_vnode:send(Partition, Operation),
 		    case Sync of
 			true ->
-			    case disk_log:sync(Log) of
-				ok ->
+%%			    case disk_log:sync(Log) of
+%%				ok ->
 				    {reply, {ok, OpId}, State#state{clock=NewClock}};
-				{error, Reason} ->
-				    {reply, {error, Reason}, State}
-			    end;
+%%				{error, Reason} ->
+%%				    {reply, {error, Reason}, State}
+%%			    end;
 			false ->
 			    {reply, {ok, OpId}, State#state{clock=NewClock}}
 		    end;
@@ -410,7 +410,7 @@ handle_handoff_data(Data, #state{partition=Partition, logs_map=Map}=State) ->
         {ok, Log} ->
             %% Optimistic handling; crash otherwise.
             {ok, _OpId} = insert_operation(Log, LogId, Operation),
-            ok = disk_log:sync(Log),
+%%            ok = disk_log:sync(Log),
             {reply, ok, State};
         {error, Reason} ->
             {reply, {error, Reason}, State}
@@ -473,7 +473,7 @@ no_elements([], _Map) ->
     true;
 no_elements([LogId|Rest], Map) ->
     case dict:find(LogId, Map) of
-        {ok, Log} -> 
+        {ok, Log} ->
             case disk_log:chunk(Log, start) of
                 eof ->
                     no_elements(Rest, Map);
@@ -547,7 +547,7 @@ join_logs([{_Preflist, Log}|T], F, Acc) ->
     join_logs(T, F, JointAcc).
 
 fold_log(Log, Continuation, F, Acc) ->
-    case  disk_log:chunk(Log,Continuation) of 
+    case  disk_log:chunk(Log,Continuation) of
         eof ->
             Acc;
         {Next,Ops} ->
@@ -567,14 +567,15 @@ fold_log(Log, Continuation, F, Acc) ->
 %%      Return: {ok, OpId} | {error, Reason}
 %%
 -spec insert_operation(log(), log_id(), operation()) -> {ok, op_id()} | {error, reason()}.
-insert_operation(Log, LogId, Operation) ->
-    Result = disk_log:log(Log, {LogId, Operation}),
-    case Result of
-        ok ->
-            {ok, Operation#operation.op_number};
-        {error, Reason} ->
-            {error, Reason}
-    end.
+insert_operation(_Log, _LogId, Operation) ->
+%%    Result = disk_log:log(Log, {LogId, Operation}),
+%%    case Result of
+%%        ok ->
+%%            {ok, Operation#operation.op_number};
+%%        {error, Reason} ->
+%%            {error, Reason}
+%%    end.
+    {ok, Operation#operation.op_number}.
 
 %% @doc preflist_member: Returns true if the Partition identifier is
 %%              part of the Preflist

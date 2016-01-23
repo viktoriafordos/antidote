@@ -32,6 +32,7 @@
          get_scalar_stable_time/0,
          get_partition_snapshot/1,
          from_list/1,
+         to_list/1,
          new/0,
          eq/2,
          lt/2,
@@ -61,7 +62,7 @@ get_stable_snapshot() ->
 	    get_stable_snapshot();
 	SS ->
             case application:get_env(antidote, txn_prot) of
-                {ok, clocksi} -> 
+                {ok, clocksi} ->
                     %% This is fine if transactions coordinators exists on the ring (i.e. they have access
                     %% to riak core meta-data) otherwise will have to change this
                     {ok, SS};
@@ -70,15 +71,15 @@ get_stable_snapshot() ->
                     %% But, replicate GST to all entries in the dict
                     StableSnapshot = SS,
                     case dict:size(StableSnapshot) of
-                        0 -> 
+                        0 ->
                             {ok, StableSnapshot};
                         _ ->
-                            ListTime = dict:fold( 
+                            ListTime = dict:fold(
                                          fun(_Key, Value, Acc) ->
                                                  [Value | Acc ]
                                          end, [], StableSnapshot),
                             GST = lists:min(ListTime),
-                            {ok, dict:map( 
+                            {ok, dict:map(
                                    fun(_K, _V) ->
                                            GST
                                    end,
@@ -101,12 +102,12 @@ get_partition_snapshot(Partition) ->
 %% Returns the minimum value in the stable vector snapshot time
 %% Useful for gentlerain protocol.
 -spec get_scalar_stable_time() -> {ok, non_neg_integer(), vectorclock()}.
-get_scalar_stable_time() ->   
+get_scalar_stable_time() ->
     {ok, StableSnapshot} = get_stable_snapshot(),
     %% dict:is_empty/1 is not available, hence using dict:size/1
     %% to check whether it is empty
     case dict:size(StableSnapshot) of
-        0 -> 
+        0 ->
             %% This case occur when updates from remote replicas has not yet received
             %% or when there are no remote replicas
             %% Since with current setup there is no mechanism
@@ -115,16 +116,16 @@ get_scalar_stable_time() ->
             {ok, Now, StableSnapshot};
         _ ->
             %% This is correct only if stablesnapshot has entries for
-            %% all DCs. Inorder to check that we need to configure the 
+            %% all DCs. Inorder to check that we need to configure the
             %% number of DCs in advance, which is not possible now.
-            ListTime = dict:fold( 
+            ListTime = dict:fold(
                          fun(_Key, Value, Acc) ->
                                  [Value | Acc ]
                          end, [], StableSnapshot),
             GST = lists:min(ListTime),
             {ok, GST, StableSnapshot}
     end.
-            
+
 -spec get_clock_of_dc(any(), vectorclock()) -> non_neg_integer().
 get_clock_of_dc(Key, VectorClock) ->
   case dict:find(Key, VectorClock) of
@@ -139,6 +140,10 @@ set_clock_of_dc(Key, Value, VectorClock) ->
 -spec from_list([{any(), non_neg_integer()}]) -> vectorclock().
 from_list(List) ->
     dict:from_list(List).
+
+-spec to_list(vectorclock()) -> list().
+to_list(VC) ->
+    dict:to_list(VC).
 
 -spec max([vectorclock()]) -> vectorclock().
 max([]) -> new();

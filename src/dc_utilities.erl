@@ -40,10 +40,16 @@
 
 %% Returns the ID of the current DC.
 %% -spec get_my_dc_id() -> dcid().
--spec dc_utilities:get_my_dc_id() -> 'undefined' | {_,_}. %% TODO: enforce the more specific
+-spec dc_utilities:get_my_dc_id() -> 'undefined' | atom(). %% TODO: enforce the more specific
 get_my_dc_id() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    riak_core_ring:cluster_name(Ring).
+    Name = riak_core_ring:cluster_name(Ring),
+    case Name of
+        {Id, _}->
+            Id;
+        Other ->
+            Other
+    end.
 
 %% Returns the list of all node addresses in the cluster.
 -spec get_my_dc_nodes() -> [node()].
@@ -140,7 +146,7 @@ bcast_vnode_check_up(VMaster,Request,[P|Rest]) ->
 	false ->
 	    bcast_vnode_check_up(VMaster,Request,Rest)
     end.
-    
+
 
 ensure_all_vnodes_running_master(VnodeType) ->
     check_registered(VnodeType),
