@@ -9,8 +9,7 @@
                   stdlib,
                   riak_pb,
                   riak_api,
-                  riak_core,
-                  antidote_db
+                  riak_core
                  ]},
   {mod, { antidote_app, []}},
   {env, [{txn_cert, true}, {txn_prot, clocksi}]}
