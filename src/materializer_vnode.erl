@@ -39,7 +39,7 @@
     check_tables_ready/0,
     read/6,
     store_ss/4,
-    update/2,
+    update/3,
     belongs_to_snapshot_op/3]).
 
 %% Callbacks
@@ -73,11 +73,11 @@ read(AntidoteDB, Key, Type, SnapshotTime, TxId, _Partition) ->
 
 %%@doc write operation to cache for future read, updates are stored
 %%     one at a time into the ets tables
--spec update(key(), clocksi_payload()) -> ok | {error, reason()}.
-update(Key, DownstreamOp) ->
+-spec update(antidote_db:antidote_db(), key(), clocksi_payload()) -> ok | {error, reason()}.
+update(AntidoteDB, Key, DownstreamOp) ->
     Preflist = log_utilities:get_preflist_from_key(Key),
     IndexNode = hd(Preflist),
-    riak_core_vnode_master:sync_command(IndexNode, {update, Key, DownstreamOp},
+    riak_core_vnode_master:sync_command(IndexNode, {update, AntidoteDB, Key, DownstreamOp},
                                         materializer_vnode_master).
 
 %%@doc write snapshot to cache for future read, snapshots are stored
