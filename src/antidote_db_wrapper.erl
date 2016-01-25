@@ -26,6 +26,10 @@
     get_ops/4,
     put_op/4]).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% Gets the most suitable snapshot for Key that has been committed
 %% before CommitTime. If its nothing is found, returns {error, not_found}
 -spec get_snapshot(antidote_db:antidote_db(), key(),
@@ -39,7 +43,7 @@ get_snapshot(AntidoteDB, Key, CommitTime) ->
                     true ->
                         %% check its a snapshot and its time is less than the one required
                         case (SNAP == snap) and
-                            vectorclock:lt(vectorclock:from_list(VC), CommitTime) of
+                            vectorclock:le(vectorclock:from_list(VC), CommitTime) of
                             true ->
                                 Snapshot = antidote_db:get(AntidoteDB, K),
                                 throw({break, Snapshot, VC});
@@ -136,3 +140,41 @@ binary_to_atom(Key) ->
         false -> Key
     end.
 
+-ifdef(TEST).
+
+get_snapshot_test() ->
+    eleveldb:destroy("get_snapshot_test", []),
+    {ok, AntidoteDB} = antidote_db:new("get_snapshot_test"),
+
+    Key = key,
+    put_n_snapshots(AntidoteDB, Key, 10),
+
+    %% no snapshot with time 0 in both DCs
+    NotFound = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 0}, {remote, 0}])),
+    ?assertEqual({error, not_found}, NotFound),
+
+    %% get some of the snapshots inserted (matches VC)
+    S1 = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 1}, {remote, 1}])),
+    S2 = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 4}, {remote, 4}])),
+    S3 = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 8}, {remote, 8}])),
+    ?assertEqual({ok, 1, [{local, 1}, {remote, 1}]}, S1),
+    ?assertEqual({ok, 4, [{local, 4}, {remote, 4}]}, S2),
+    ?assertEqual({ok, 8, [{local, 8}, {remote, 8}]}, S3),
+
+    %% get snapshots with different times in their DCs
+    S4 = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 1}, {remote, 0}])),
+    S5 = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 5}, {remote, 4}])),
+    S6 = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 8}, {remote, 9}])),
+    ?assertEqual({error, not_found}, S4),
+    ?assertEqual({ok, 4, [{local, 4}, {remote, 4}]}, S5),
+    ?assertEqual({ok, 8, [{local, 8}, {remote, 8}]}, S6),
+
+    antidote_db:close_and_destroy(AntidoteDB, "get_snapshot_test").
+
+put_n_snapshots(_AntidoteDB, _Key, 0) ->
+    ok;
+put_n_snapshots(AntidoteDB, Key, N) ->
+    put_snapshot(AntidoteDB, Key, [{local, N},{remote, N}], N),
+    put_n_snapshots(AntidoteDB, Key, N-1).
+
+-endif.
