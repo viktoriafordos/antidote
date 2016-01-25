@@ -65,7 +65,7 @@ get_snapshot(AntidoteDB, Key, CommitTime) ->
     snapshot()) -> ok | error.
 put_snapshot(AntidoteDB, Key, SnapshotTime, Snapshot) ->
     SnapshotTimeList = vectorclock_to_list(SnapshotTime),
-    antidote_db:put(AntidoteDB, {Key, SnapshotTimeList, snap}, Snapshot).
+    antidote_db:put(AntidoteDB, {binary_to_atom(Key), SnapshotTimeList, snap}, Snapshot).
 
 %% Returns a list of operations that have commit time in the range [VCFrom, VCTo]
 -spec get_ops(antidote_db:antidote_db(), key(), vectorclock(), vectorclock()) -> list().
@@ -114,7 +114,7 @@ get_ops(AntidoteDB, Key, VCFrom, VCTo) ->
 -spec put_op(antidote_db:antidote_db(), key(), vectorclock(), operation()) -> ok | error.
 put_op(AntidoteDB, Key, VC, Op) ->
     VCList = vectorclock_to_list(VC),
-    antidote_db:put(AntidoteDB, {Key, VCList, op}, Op).
+    antidote_db:put(AntidoteDB, {binary_to_atom(Key), VCList, op}, Op).
 
 vectorclock_to_dict(VC) ->
     case is_list(VC) of
@@ -126,5 +126,13 @@ vectorclock_to_list(VC) ->
     case is_list(VC) of
         true -> VC;
         false -> vectorclock:to_list(VC)
+    end.
+
+%% Workaround for basho bench
+%% TODO find a better solution to this
+binary_to_atom(Key) ->
+    case is_binary(Key) of
+        true -> list_to_atom(integer_to_list(binary_to_integer(Key)));
+        false -> Key
     end.
 
