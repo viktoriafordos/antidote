@@ -142,16 +142,39 @@ binary_to_atom(Key) ->
 
 -ifdef(TEST).
 
-get_snapshot_test() ->
-    eleveldb:destroy("get_snapshot_test", []),
-    {ok, AntidoteDB} = antidote_db:new("get_snapshot_test"),
+get_snapshot_not_found_test() ->
+    eleveldb:destroy("get_snapshot_not_found_test", []),
+    {ok, AntidoteDB} = antidote_db:new("get_snapshot_not_found_test"),
+
+    Key = key,
+    Key1 = key1,
+    Key2 = key2,
+    %% No snapshot in the DB
+    NotFound = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 0}, {remote, 0}])),
+    ?assertEqual({error, not_found}, NotFound),
+
+    %% Put 10 snapshots for Key and check there is no snapshot with time 0 in both DCs
+    put_n_snapshots(AntidoteDB, Key, 10),
+    NotFound1 = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 0}, {remote, 0}])),
+    ?assertEqual({error, not_found}, NotFound1),
+
+    %% Look for a snapshot for Key1
+    S1 = get_snapshot(AntidoteDB, Key1, vectorclock:from_list([{local, 5}, {remote, 4}])),
+    ?assertEqual({error, not_found}, S1),
+
+    %% Put snapshots for Key2 and look for a snapshot for Key1
+    put_n_snapshots(AntidoteDB, Key2, 10),
+    S2 = get_snapshot(AntidoteDB, Key1, vectorclock:from_list([{local, 5}, {remote, 4}])),
+    ?assertEqual({error, not_found}, S2),
+
+    antidote_db:close_and_destroy(AntidoteDB, "get_snapshot_not_found_test").
+
+get_snapshot_matching_vc_test() ->
+    eleveldb:destroy("get_snapshot_matching_vc_test", []),
+    {ok, AntidoteDB} = antidote_db:new("get_snapshot_matching_vc_test"),
 
     Key = key,
     put_n_snapshots(AntidoteDB, Key, 10),
-
-    %% no snapshot with time 0 in both DCs
-    NotFound = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 0}, {remote, 0}])),
-    ?assertEqual({error, not_found}, NotFound),
 
     %% get some of the snapshots inserted (matches VC)
     S1 = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 1}, {remote, 1}])),
@@ -161,6 +184,16 @@ get_snapshot_test() ->
     ?assertEqual({ok, 4, [{local, 4}, {remote, 4}]}, S2),
     ?assertEqual({ok, 8, [{local, 8}, {remote, 8}]}, S3),
 
+    antidote_db:close_and_destroy(AntidoteDB, "get_snapshot_matching_vc_test").
+
+
+get_snapshot_not_matching_vc_test() ->
+    eleveldb:destroy("get_snapshot_not_matching_vc_test", []),
+    {ok, AntidoteDB} = antidote_db:new("get_snapshot_not_matching_vc_test"),
+
+    Key = key,
+    put_n_snapshots(AntidoteDB, Key, 10),
+
     %% get snapshots with different times in their DCs
     S4 = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 1}, {remote, 0}])),
     S5 = get_snapshot(AntidoteDB, Key, vectorclock:from_list([{local, 5}, {remote, 4}])),
@@ -169,22 +202,52 @@ get_snapshot_test() ->
     ?assertEqual({ok, 4, [{local, 4}, {remote, 4}]}, S5),
     ?assertEqual({ok, 8, [{local, 8}, {remote, 8}]}, S6),
 
-    antidote_db:close_and_destroy(AntidoteDB, "get_snapshot_test").
+    antidote_db:close_and_destroy(AntidoteDB, "get_snapshot_not_matching_vc_test").
 
-
-get_operations_test() ->
-    eleveldb:destroy("get_operations_test", []),
-    {ok, AntidoteDB} = antidote_db:new("get_operations_test"),
-
+get_operations_empty_result_test() ->
+    eleveldb:destroy("get_operations_not_found_test", []),
+    {ok, AntidoteDB} = antidote_db:new("get_operations_not_found_test"),
     Key = key,
-    put_n_operations(AntidoteDB, Key, 10),
-
+    Key1 = key1,
+    %% Nothing in the DB yet return empty list
     O1 = get_ops(AntidoteDB, Key, [{local, 2}, {remote, 2}], [{local, 8}, {remote, 9}]),
-    O2 = get_ops(AntidoteDB, Key, [{local, 4}, {remote, 5}], [{local, 7}, {remote, 7}]),
+    ?assertEqual([], O1),
+
+    put_n_operations(AntidoteDB, Key, 10),
+    %% Getting something out of range returns an empty list
+    O2 = get_ops(AntidoteDB, Key, [{local, 123}, {remote, 100}], [{local, 200}, {remote, 124}]),
+    ?assertEqual([], O2),
+
+    %% Getting a key not present, returns an empty list
+    O3 = get_ops(AntidoteDB, Key1, [{local, 2}, {remote, 2}], [{local, 4}, {remote, 5}]),
+    ?assertEqual([], O3),
+
+    %% Searching for the same range returns an empty list
+    O4 = get_ops(AntidoteDB, Key1, [{local, 2}, {remote, 2}], [{local, 2}, {remote, 2}]),
+    ?assertEqual([], O4),
+
+    antidote_db:close_and_destroy(AntidoteDB, "get_operations_not_found_test").
+
+
+get_operations_non_empty_test() ->
+    eleveldb:destroy("get_operations_non_empty_test", []),
+    {ok, AntidoteDB} = antidote_db:new("get_operations_non_empty_test"),
+
+    %% Fill the DB with values
+    Key = key,
+    Key1 = key1,
+    Key2 = key2,
+    put_n_operations(AntidoteDB, Key, 100),
+    put_n_operations(AntidoteDB, Key1, 10),
+    put_n_operations(AntidoteDB, Key2, 25),
+
+    %% concurrent operations are present in the result
+    O1 = get_ops(AntidoteDB, Key1, [{local, 2}, {remote, 2}], [{local, 8}, {remote, 9}]),
+    O2 = get_ops(AntidoteDB, Key1, [{local, 4}, {remote, 5}], [{local, 7}, {remote, 7}]),
     ?assertEqual([9,8,7,6,5,4,3,2], O1),
     ?assertEqual([7,6,5,4], O2),
 
-    antidote_db:close_and_destroy(AntidoteDB, "get_operations_test").
+    antidote_db:close_and_destroy(AntidoteDB, "get_operations_non_empty_test").
 
 put_n_snapshots(_AntidoteDB, _Key, 0) ->
     ok;
