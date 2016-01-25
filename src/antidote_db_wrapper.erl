@@ -171,10 +171,31 @@ get_snapshot_test() ->
 
     antidote_db:close_and_destroy(AntidoteDB, "get_snapshot_test").
 
+
+get_operations_test() ->
+    eleveldb:destroy("get_operations_test", []),
+    {ok, AntidoteDB} = antidote_db:new("get_operations_test"),
+
+    Key = key,
+    put_n_operations(AntidoteDB, Key, 10),
+
+    O1 = get_ops(AntidoteDB, Key, [{local, 2}, {remote, 2}], [{local, 8}, {remote, 9}]),
+    O2 = get_ops(AntidoteDB, Key, [{local, 4}, {remote, 5}], [{local, 7}, {remote, 7}]),
+    ?assertEqual([9,8,7,6,5,4,3,2], O1),
+    ?assertEqual([7,6,5,4], O2),
+
+    antidote_db:close_and_destroy(AntidoteDB, "get_operations_test").
+
 put_n_snapshots(_AntidoteDB, _Key, 0) ->
     ok;
 put_n_snapshots(AntidoteDB, Key, N) ->
-    put_snapshot(AntidoteDB, Key, [{local, N},{remote, N}], N),
-    put_n_snapshots(AntidoteDB, Key, N-1).
+    put_snapshot(AntidoteDB, Key, [{local, N}, {remote, N}], N),
+    put_n_snapshots(AntidoteDB, Key, N - 1).
+
+put_n_operations(_AntidoteDB, _Key, 0) ->
+    ok;
+put_n_operations(AntidoteDB, Key, N) ->
+    put_op(AntidoteDB, Key, [{local, N}, {remote, N}], N),
+    put_n_operations(AntidoteDB, Key, N - 1).
 
 -endif.
