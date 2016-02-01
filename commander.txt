@@ -1,0 +1,4 @@
+Make devrel
+cd $HOME/antidote
+dev/dev1/bin/antidote console
+comm_env_builder:build_clusters(Setting) %% Setting: [integer()], e.g., setting [1,1,1,1] builds a cluster of single node DCs
