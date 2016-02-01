@@ -43,7 +43,7 @@ start_link() ->
 %% ===================================================================
 
 init(_Args) ->
-    LoggingMaster = {logging_vnode_master,
+	LoggingMaster = {logging_vnode_master,
                      {riak_core_vnode_master, start_link, [logging_vnode]},
                      permanent, 5000, worker, [riak_core_vnode_master]},
 
@@ -77,8 +77,7 @@ init(_Args) ->
     InterDcDepVnode = ?VNODE(inter_dc_dep_vnode_master, inter_dc_dep_vnode),
     InterDcLogReaderQMaster = ?CHILD(inter_dc_log_reader_query, worker, []),
     InterDcLogReaderRMaster = ?CHILD(inter_dc_log_reader_response, worker, []),
-    InterDcLogSenderMaster = ?VNODE(inter_dc_log_sender_vnode_master, inter_dc_log_sender_vnode),
-
+    InterDcLogSenderMaster = ?VNODE(inter_dc_log_sender_vnode_master, inter_dc_log_sender_vnode),   
     
     MetaDataManagerSup = {meta_data_manager_sup,
 			  {meta_data_manager_sup, start_link, [stable]},
@@ -89,6 +88,8 @@ init(_Args) ->
 			  {meta_data_sender_sup, start_link, [stable_time_functions:export_funcs_and_vals()]},
 			  permanent, 5000, supervisor,
 			  [meta_data_sender_sup]},
+
+	  CommanderEnvBuilder = ?CHILD(comm_env_builder, worker, []),
 
 
     {ok,
@@ -108,4 +109,5 @@ init(_Args) ->
        InterDcLogReaderRMaster,
        InterDcLogSenderMaster,
        MetaDataManagerSup,
-       MetaDataSenderSup]}}.
+       MetaDataSenderSup,
+       CommanderEnvBuilder]}}.

@@ -60,7 +60,7 @@ stage-riak-test: all
 
 .PHONY : stagedevrel devrel
 
-DEVNODES ?= 3
+DEVNODES ?= 4
 
 # 'seq' is not available on all *BSD, so using an alternate in awk
 SEQ = $(shell awk 'BEGIN { for (i = 1; i < '$(DEVNODES)'; i++) printf("%i ", i); print i ;exit(0);}')
