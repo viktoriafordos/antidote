@@ -47,6 +47,10 @@ riak-test: currentdevrel
 stage-riak-test: all
 	$(foreach dep,$(wildcard riak_test/*.erl), ../riak_test/riak_test -v -c antidote -t $(dep);)
 
+my-test: 
+	$(REBAR) skip_deps=true riak_test_compile
+	../riak_test/riak_test -v -c antidote -t shopping_cart_test
+
 ##
 ## Developer targets
 ##
