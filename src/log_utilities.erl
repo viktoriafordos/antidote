@@ -29,6 +29,7 @@
 -export([get_preflist_from_key/1,
          get_logid_from_key/1,
          remove_node_from_preflist/1,
+         get_successor/1,
          get_my_node/1
         ]).
 
@@ -69,6 +70,20 @@ get_primaries_preflist(Key)->
 get_my_node(Partition) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     riak_core_ring:index_owner(Ring, Partition).
+
+get_successor(Partition) ->
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    PartitionList = chashbin:to_list(CHBin),
+    Index = index_of({Partition, node()}, PartitionList, 1),
+    SuccLen = Index rem length(PartitionList) + 1,
+    lists:nth(SuccLen, PartitionList).
+
+index_of(_, [], 1) ->
+    0;
+index_of(K, [K|_R], Index) ->
+    Index;
+index_of(K, [_|R], Index) ->
+    index_of(K, R, Index+1).
 
 %% @doc remove_node_from_preflist: From each element of the input
 %%      preflist, the node identifier is removed

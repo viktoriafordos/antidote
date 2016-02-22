@@ -62,6 +62,7 @@
 -record(state, {
   partition :: partition_id(),
   ops_cache :: cache_id(),
+  successor :: term(),
   snapshot_cache :: cache_id()}).
 
 start_vnode(I) ->
@@ -107,7 +108,7 @@ store_ss(Key, Snapshot, CommitTime) ->
 init([Partition]) ->
     OpsCache = open_table(Partition, ops_cache),
     SnapshotCache = open_table(Partition, snapshot_cache),
-    {ok, #state{partition=Partition, ops_cache=OpsCache, snapshot_cache=SnapshotCache}}.
+    {ok, #state{partition=Partition, ops_cache=OpsCache, snapshot_cache=SnapshotCache, successor=[]}}.
 
 -spec open_table(partition_id(), 'ops_cache' | 'snapshot_cache') -> atom() | ets:tid().
 open_table(Partition, Name) ->
@@ -171,11 +172,42 @@ handle_command({read, Key, Type, SnapshotTime, TxId}, _Sender,
                State = #state{ops_cache = OpsCache, snapshot_cache=SnapshotCache,partition=Partition})->
     {reply, read(Key, Type, SnapshotTime, TxId,OpsCache,SnapshotCache,Partition), State};
 
-handle_command({update, Key, DownstreamOp}, _Sender,
-               State = #state{ops_cache = OpsCache, snapshot_cache=SnapshotCache})->
+handle_command({update, Key, DownstreamOp}, Sender,
+               State = #state{ops_cache = OpsCache, successor=Successor, partition=Partition, snapshot_cache=SnapshotCache})->
     true = op_insert_gc(Key,DownstreamOp, OpsCache, SnapshotCache),
-    {reply, ok, State};
+    case ?REP of
+        1 ->
+            {reply, ok, State};
+        _ ->
+            case Successor of
+                [] ->
+                    NewSucc = log_utilities:get_successor(Partition), 
+                    rep_update(NewSucc, Key, DownstreamOp, Sender, ?REP-1),
+                    {noreply, State#state{successor=NewSucc}};
+                _ ->
+                    rep_update(Successor, Key, DownstreamOp, Sender, ?REP-1),
+                    {noreply, State}
+            end
+    end;
 
+handle_command({rep_update, Key, DownstreamOp, ToReply, ToRep}, _Sender,
+               State = #state{ops_cache = OpsCache, successor=Successor, partition=Partition, snapshot_cache=SnapshotCache})->
+    true = op_insert_gc(Key,DownstreamOp, OpsCache, SnapshotCache),
+    case ToRep of
+        1 ->
+            riak_core_vnode:reply(ToReply, ok),
+            {noreply, State};
+        _ ->
+            case Successor of
+                [] ->
+                    NewSucc = log_utilities:get_successor(Partition), 
+                    rep_update(NewSucc, Key, DownstreamOp, ToReply, ToRep-1),
+                    {noreply, State#state{successor=NewSucc}};
+                _ ->
+                    rep_update(Successor, Key, DownstreamOp, ToReply, ToRep-1),
+                    {noreply, State}
+            end
+    end;
 
 handle_command({store_ss, Key, Snapshot, CommitTime}, _Sender,
                State = #state{ops_cache = OpsCache, snapshot_cache=SnapshotCache})->

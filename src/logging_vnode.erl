@@ -110,6 +110,11 @@ asyn_append(Preflist, Log, Payload) ->
                                    {fsm, undefined, self(), ?SYNC_LOG},
                                    ?LOGGING_MASTER).
 
+-spec rep_append(preflist(), key(), term()) -> ok.
+rep_append(IndexNode, Key, LogId, Payload, Sender, ToRep, IfSync) ->
+    riak_core_vnode_master:command(IndexNode, {rep_append, Key, LogId, Payload, Sender, ToRep, IfSync},
+                                          materializer_vnode_master).
+
 %% @doc synchronous append operation
 -spec append(index_node(), key(), term()) -> {ok, op_id()} | {error, term()}.
 append(IndexNode, LogId, Payload) ->
@@ -245,18 +250,17 @@ handle_command({append, LogId, Payload, Sync}, _Sender,
             Operation = #operation{op_number = OpId, payload = Payload},
             case insert_operation(Log, LogId, Operation) of
                 {ok, OpId} ->
-                  inter_dc_log_sender_vnode:send(Partition, Operation),
-		    case Sync of
-			true ->
-			    case disk_log:sync(Log) of
-				ok ->
-				    {reply, {ok, OpId}, State#state{clock=NewClock}};
-				{error, Reason} ->
-				    {reply, {error, Reason}, State}
-			    end;
-			false ->
-			    {reply, {ok, OpId}, State#state{clock=NewClock}}
-		    end;
+                    inter_dc_log_sender_vnode:send(Partition, Operation),
+		            case Sync of
+			            true ->
+			                case disk_log:sync(Log) of
+				                ok -> {reply, {ok, OpId}, State#state{clock=NewClock}};
+				                {error, Reason} ->
+				                    {reply, {error, Reason}, State}
+			                end;
+			            false ->
+			                {reply, {ok, OpId}, State#state{clock=NewClock}}
+		            end;
                 {error, Reason} ->
                     {reply, {error, Reason}, State}
             end;

@@ -7,6 +7,7 @@
 -define(CLOCKSI, clocksi).
 -define(REPMASTER, antidote_rep_vnode_master).
 -define(N, 1).
+-define(REP, 3).
 -define(OP_TIMEOUT, infinity).
 -define(COORD_TIMEOUT, infinity).
 -define(COMM_TIMEOUT, infinity).
