@@ -60,6 +60,7 @@
 
 -record(state, {partition :: partition_id(),
 		logs_map :: dict(),
+        successor :: term(),
 		clock :: non_neg_integer(),
 		senders_awaiting_ack :: dict(),
 		last_read :: term()}).
@@ -106,20 +107,20 @@ read(Node, Log) ->
 -spec asyn_append(preflist(), key(), term()) -> ok.
 asyn_append(Preflist, Log, Payload) ->
     riak_core_vnode_master:command(Preflist,
-                                   {append, Log, Payload},
+                                   {append, nil, Log, Payload, nil, ?REP, ?SYNC_LOG},
                                    {fsm, undefined, self(), ?SYNC_LOG},
                                    ?LOGGING_MASTER).
 
--spec rep_append(preflist(), key(), term()) -> ok.
-rep_append(IndexNode, Key, LogId, Payload, Sender, ToRep, IfSync) ->
-    riak_core_vnode_master:command(IndexNode, {rep_append, Key, LogId, Payload, Sender, ToRep, IfSync},
+-spec rep_append(preflist(), term(), key(), term(), term(), integer(), boolean()) -> ok.
+rep_append(IndexNode, OpId, LogId, Payload, Sender, ToRep, IfSync) ->
+    riak_core_vnode_master:command(IndexNode, {append, OpId, LogId, Payload, Sender, ToRep, IfSync},
                                           materializer_vnode_master).
 
 %% @doc synchronous append operation
 -spec append(index_node(), key(), term()) -> {ok, op_id()} | {error, term()}.
 append(IndexNode, LogId, Payload) ->
     riak_core_vnode_master:sync_command(IndexNode,
-                                        {append, LogId, Payload, false},
+                                        {append, nil, LogId, Payload, nil, ?REP, false},
                                         ?LOGGING_MASTER,
                                         infinity).
 
@@ -128,7 +129,7 @@ append(IndexNode, LogId, Payload) ->
 -spec append_commit(index_node(), key(), term()) -> {ok, op_id()} | {error, term()}.
 append_commit(IndexNode, LogId, Payload) ->
     riak_core_vnode_master:sync_command(IndexNode,
-                                        {append, LogId, Payload, ?SYNC_LOG},
+                                        {append, nil, LogId, Payload, nil, ?REP, ?SYNC_LOG},
                                         ?LOGGING_MASTER,
                                         infinity).
 
@@ -239,27 +240,51 @@ handle_command({read_from, LogId, _From}, _Sender,
 %%              OpId: Unique operation id
 %%      Output: {ok, {vnode_id, op_id}} | {error, Reason}
 %%
-handle_command({append, LogId, Payload, Sync}, _Sender,
+handle_command({append, GivenOpId, LogId, Payload, GivenSender, ToRep, Sync}, CSender,
                #state{logs_map=Map,
                       clock=Clock,
+                      successor=Successor,
                       partition=Partition}=State) ->
-    OpId = generate_op_id(Clock),
-    {NewClock, _Node} = OpId,
+    {NewClock, OpId} =  case GivenOpId of 
+                nil -> NewOpId = generate_op_id(Clock), {NC, _} = NewOpId, {NC, NewOpId};
+                _ -> {Clock, GivenOpId}
+            end, 
+    Sender = case GivenSender of nil -> CSender;
+                            _ -> GivenSender end,
     case get_log_from_map(Map, Partition, LogId) of
         {ok, Log} ->
             Operation = #operation{op_number = OpId, payload = Payload},
             case insert_operation(Log, LogId, Operation) of
                 {ok, OpId} ->
-                    inter_dc_log_sender_vnode:send(Partition, Operation),
 		            case Sync of
 			            true ->
 			                case disk_log:sync(Log) of
-				                ok -> {reply, {ok, OpId}, State#state{clock=NewClock}};
-				                {error, Reason} ->
-				                    {reply, {error, Reason}, State}
+				                ok -> 
+                                    case ToRep of 1 ->
+                                        inter_dc_log_sender_vnode:send(Partition, Operation),
+                                        riak_vnode:reply(Sender, {ok, OpId}),
+                                        {noreply, State#state{clock=NewClock}};
+                                        _ ->
+                                        case Successor of
+                                            [] ->
+                                                NewSucc = log_utilities:get_successor(Partition),
+                                                rep_append(Successor, OpId, LogId, Payload, Sender, ToRep-1, Sync),
+                                                {noreply, State#state{successor=NewSucc, clock=NewClock}};
+                                            _ ->
+                                                rep_append(Successor, OpId, LogId, Payload, Sender, ToRep-1, Sync),
+                                                {noreply, State#state{clock=NewClock}}
+                                        end
+                                    end;
+				                {error, Reason} -> {reply, {error, Reason}, State}
 			                end;
 			            false ->
-			                {reply, {ok, OpId}, State#state{clock=NewClock}}
+                            case ToRep of 1 ->
+                                inter_dc_log_sender_vnode:send(Partition, Operation),
+                                riak_vnode:reply(Sender, {ok, OpId});
+                                _ ->
+                                rep_append(Successor, OpId, LogId, Payload, Sender, ToRep-1, Sync)
+                            end,
+			                {noreply, State#state{clock=NewClock}}
 		            end;
                 {error, Reason} ->
                     {reply, {error, Reason}, State}
