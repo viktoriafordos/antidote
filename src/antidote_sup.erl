@@ -89,8 +89,6 @@ init(_Args) ->
 			  permanent, 5000, supervisor,
 			  [meta_data_sender_sup]},
 
-	  CommanderEnvBuilder = ?CHILD(comm_env_builder, worker, []),
-
 
     {ok,
      {{one_for_one, 5, 10},
@@ -109,5 +107,4 @@ init(_Args) ->
        InterDcLogReaderRMaster,
        InterDcLogSenderMaster,
        MetaDataManagerSup,
-       MetaDataSenderSup,
-       CommanderEnvBuilder]}}.
+       MetaDataSenderSup]}}.

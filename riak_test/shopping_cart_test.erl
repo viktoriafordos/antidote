@@ -8,6 +8,7 @@
 -define(HARNESS, (rt_config:get(rt_harness))).
 
 confirm() ->
+
   rt:setup_harness(dummy, dummy),
 
   NumVNodes = rt_config:get(num_vnodes, 8),
@@ -55,7 +56,9 @@ parallel_test(Cluster1, Cluster2, Cluster3) ->
                        Time = dict:merge(fun(_K, T1, T2) -> max(T1, T2) end,
                          CT1,
                          dict:merge(fun(_K, T1, T2) -> max(T1, T2) end, CT2, CT3)),
+                       lager:info("Before get val."),
                        Vals = [get_val_cart(Node, Cart, Time) || Node <- [Node1, Node2, Node3]],
+                       lager:info("after get val."),
                        Quiescence_val = lists:usort(Vals),
                        ?assertMatch(Quiescence_val, [hd(Vals)])
                    end
@@ -63,6 +66,10 @@ parallel_test(Cluster1, Cluster2, Cluster3) ->
                pass
            end,
   ?assertMatch(Result, pass),
+  
+  lager:info("Cookie: ~p, Node: ~p", [erlang:get_cookie(), node()]),
+  lager:info("Self: ~p~n riak_test: ~p", [self(), whereis(riak_test)]),
+
   pass.
 
 get_val_cart(Node, Cart, Clock) ->

@@ -128,7 +128,31 @@ try_store(State, Txn=#interdc_txn{dcid = DCID, partition = Partition, timestamp 
       ClockSiOps = updates_to_clocksi_payloads(Txn),
 
       ok = lists:foreach(fun(Op) -> materializer_vnode:update(Op#clocksi_payload.key, Op) end, ClockSiOps),
+
+      %% ==================== Commander Instrumentation ====================
+      %% Record Logged Transaction
+      %% ===================================================================
+      %Snapshot = Txn#interdc_txn.snapshot,
+      Commit_op = lists:last(Ops),
+      Log_rec = Commit_op#operation.payload,
+      %Txn_Id = Log_rec#log_record.tx_id,
+      Commit = Log_rec#log_record.op_type,
+      %{{Dc_id, TS}, TxnCommitTimeVC} = Log_rec#log_record.op_payload,
+      case Commit of
+        commit ->
+          CommEvent = [{dc_id, dc_utilities:get_my_dc_id()}, {node, node()}, {txn, Txn}],
+          Res = rpc:call('riak_test@127.0.0.1', commander, do_record, [CommEvent]);
+        Else ->
+          Res = rpc:call('riak_test@127.0.0.1', commander, do_record, [Else])
+      end,
+      case Res of
+        {recorded, _} -> lager:info("Txn recorded by the Commander.");
+        Msg -> lager:info("Recording Txn by the Commander was not successful: ~n~p", [Msg])
+      end,
+      %% ==================== End of Instrumentation Region ====================
+
       {update_clock(State, DCID, Timestamp), true}
+
   end.
 
 handle_command({txn, Txn}, _Sender, State) ->
