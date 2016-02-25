@@ -122,7 +122,6 @@ execute_batch_ops(execute, Sender, SD=#tx_coord_state{operations = Operations,
 			    _ ->
 				case Operation of
 				    {update, {Key, Type, OpParams}} ->
-                    %lager:info("Updating ~w ~w ~w", [Key, Type, OpParams]),
 					case clocksi_interactive_tx_coord_fsm:perform_update({Key,Type,OpParams},Acc#tx_coord_state.updated_partitions,Transaction,undefined) of
 					    {error,Reason} ->
 						{error, Reason};
@@ -130,7 +129,6 @@ execute_batch_ops(execute, Sender, SD=#tx_coord_state{operations = Operations,
 						Acc#tx_coord_state{updated_partitions= NewUpdatedPartitions}
 					end;
 				    {read, {Key, Type}} ->
-                    %lager:info("Reading ~w ~w ~w", [Key, Type]),
                     Preflist = ?LOG_UTIL:get_preflist_from_key(Key),
                     IndexNode = hd(Preflist),
 					clocksi_vnode:async_read_data_item(IndexNode, Transaction, Key, Type),

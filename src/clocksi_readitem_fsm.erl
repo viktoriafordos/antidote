@@ -90,7 +90,7 @@ read_data_item({Partition,Node},Key,Type,Transaction) ->
     catch
         _:Reason ->
             lager:error("Exception caught: ~p, starting read server to fix", [Reason]),
-	    check_server_ready([{Partition,Node}]),
+	        check_server_ready([{Partition,Node}]),
             read_data_item({Partition,Node},Key,Type,Transaction)
     end.
 
@@ -255,7 +255,6 @@ check_prepared_list(Key,SnapshotTime,[{_TxId,Time}|Rest]) ->
 %%  - Reads and returns the log of specified Key using replication layer.
 return(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,Partition) ->
     VecSnapshotTime = Transaction#transaction.vec_snapshot_time,
-    %lager:info("Here is the vector snapshot time we'll be reading from: ~p", [VecSnapshotTime]),
     TxId = Transaction#transaction.txn_id,
     case materializer_vnode:read(Key, Type, VecSnapshotTime, TxId,OpsCache,SnapshotCache, Partition) of
         {ok, Snapshot} ->

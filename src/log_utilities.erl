@@ -27,9 +27,15 @@
 
 
 -export([get_preflist_from_key/1,
+         get_tail_preflist_from_key/1,
+         get_preflist_from_key/2,
          get_logid_from_key/1,
          remove_node_from_preflist/1,
          get_successor/1,
+         get_all_successors/1,
+         get_index/1,
+         get_last_replica/1,
+         get_predecessors/2,
          get_my_node/1
         ]).
 
@@ -49,22 +55,36 @@ get_logid_from_key(Key) ->
 get_preflist_from_key(Key) ->
     ConvertedKey = convert_key(Key),
     %HashedKey = riak_core_util:chash_key({?BUCKET, term_to_binary(Key)}),
-    get_primaries_preflist(ConvertedKey).
+    get_primaries_preflist(ConvertedKey, 1).
+
+%% @doc get_tail_preflist_from_key returns the tail of the preference list where a given
+%%      key's logfile will be located.
+-spec get_tail_preflist_from_key(key()) -> preflist().
+get_tail_preflist_from_key(Key) ->
+    ConvertedKey = convert_key(Key),
+    get_primaries_preflist(ConvertedKey, ?REP).
+
+%% @doc get_preflist_from_key returns a preference list where a given
+%%      key's logfile will be located.
+-spec get_preflist_from_key(key(), integer()) -> preflist().
+get_preflist_from_key(Key, Index) ->
+    ConvertedKey = convert_key(Key),
+    get_primaries_preflist(ConvertedKey, Index).
 
 %% @doc get_primaries_preflist returns the preflist with the primary
 %%      vnodes. No matter they are up or down.
 %%      Input:  A hashed key
 %%      Return: The primaries preflist
 %%
--spec get_primaries_preflist(non_neg_integer()) -> preflist().
-get_primaries_preflist(Key)->
+-spec get_primaries_preflist(non_neg_integer(), integer()) -> preflist().
+get_primaries_preflist(Key, Index)->
     %{ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     %Itr = chashbin:iterator(Key, CHBin),
     %{Primaries, _} = chashbin:itr_pop(?N, Itr),
     %Primaries.
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     PartitionList = chashbin:to_list(CHBin),
-    Pos = Key rem length(PartitionList) + 1,
+    Pos = (Key+Index-2) rem length(PartitionList) + 1,
     [lists:nth(Pos, PartitionList)].
 
 get_my_node(Partition) ->
@@ -78,9 +98,49 @@ get_successor(Partition) ->
     SuccLen = Index rem length(PartitionList) + 1,
     lists:nth(SuccLen, PartitionList).
 
+get_all_successors(Index) ->
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    PartitionList = chashbin:to_list(CHBin),
+    Length = length(PartitionList),
+    case Index+?REP-1 > Length of
+        true ->
+            Seq1 = lists:seq(Index+1, Length),
+            Seq2 = lists:seq(1, ?REP-(Length-Index)-1),
+            L1 = lists:foldl(fun(I, Acc) -> [lists:nth(I, PartitionList)|Acc] end, [], Seq1),
+            lists:foldl(fun(I, Acc) -> [lists:nth(I, PartitionList)|Acc] end, L1, Seq2);
+        false ->
+            IndexSeq = lists:seq(Index+1, Index+?REP-1),
+            lists:foldl(fun(I, Acc) -> [lists:nth(I, PartitionList)|Acc] end, [], IndexSeq)
+    end.
+
+get_index(Partition) ->
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    PartitionList = chashbin:to_list(CHBin),
+    index_of({Partition, node()}, PartitionList, 1).
+
+get_last_replica(PartitionNode) ->
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    PartitionList = chashbin:to_list(CHBin),
+    Index = index_of(PartitionNode, PartitionList, 1),
+    SuccLen = Index-2+?REP rem length(PartitionList) + 1,
+    lists:nth(SuccLen, PartitionList).
+
+get_predecessors(Partition, N) ->
+    case N of
+        1 ->
+            [];
+        _ ->
+            {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+            PartitionList = chashbin:to_list(CHBin),
+            Length = length(PartitionList),
+            Index = index_of({Partition, node()}, PartitionList, 1),
+            IndexSeq = lists:seq((Length-N+1+Index) rem Length, (Length-1+Index) rem Length),
+            lists:foldl(fun(I, Acc) -> [lists:nth(I, PartitionList)|Acc] end, [], IndexSeq)
+    end.
+
 index_of(_, [], 1) ->
     0;
-index_of(K, [K|_R], Index) ->
+index_of({K, _}, [{K, _}|_R], Index) ->
     Index;
 index_of(K, [_|R], Index) ->
     index_of(K, R, Index+1).

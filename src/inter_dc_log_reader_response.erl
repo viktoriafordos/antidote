@@ -106,7 +106,8 @@ get_entries(Partition, From, To) ->
 %% TODO: also fix the method to provide complete snapshots if the log was trimmed
 -spec log_read_range(partition_id(), node(), log_opid(), log_opid()) -> [#operation{}].
 log_read_range(Partition, Node, From, To) ->
-  {ok, RawOpList} = logging_vnode:read({Partition, Node}, [Partition]),
+  LastReplica = log_utilities:get_last_replica({Partition, Node}),
+  {ok, RawOpList} = logging_vnode:read(LastReplica, [Partition]),
   OpList = lists:map(fun({_Partition, Op}) -> Op end, RawOpList),
   filter_operations(OpList, From, To).
 

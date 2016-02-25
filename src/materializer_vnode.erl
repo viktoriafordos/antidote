@@ -288,16 +288,16 @@ internal_read(Key, Type, MinSnapshotTime, TxId, OpsCache, SnapshotCache,ShouldGc
 	case Result of
 	    {error, no_snapshot} ->
 		LogId = log_utilities:get_logid_from_key(Key),
-		[Node] = log_utilities:get_preflist_from_key(Key),
+		[Node] = log_utilities:get_tail_preflist_from_key(Key),
 		Res = logging_vnode:get(Node, {get, LogId, MinSnapshotTime, Type, Key}),
 		Res;
 	    {LatestSnapshot1,SnapshotCommitTime1,IsFirst1} ->
 		case ets:lookup(OpsCache, Key) of
 		    [] ->
-			{0, [], LatestSnapshot1,SnapshotCommitTime1,IsFirst1};
+			    {0, [], LatestSnapshot1,SnapshotCommitTime1,IsFirst1};
 		    [Tuple] ->
-			{Key,Length1,_OpId,AllOps} = tuple_to_key(Tuple),
-			{Length1, AllOps, LatestSnapshot1, SnapshotCommitTime1, IsFirst1}
+			    {Key,Length1,_OpId,AllOps} = tuple_to_key(Tuple),
+			    {Length1, AllOps, LatestSnapshot1, SnapshotCommitTime1, IsFirst1}
 		end
 	end,
     case Length of
