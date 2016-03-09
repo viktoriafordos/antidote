@@ -49,7 +49,7 @@ stage-riak-test: all
 
 my-test: 
 	$(REBAR) skip_deps=true riak_test_compile
-	../riak_test/riak_test -v -c antidote -t shopping_cart_test
+	../riak_test/riak_test -v -c antidote -t online_store_test
 
 ##
 ## Developer targets
