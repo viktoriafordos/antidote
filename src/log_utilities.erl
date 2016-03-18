@@ -60,21 +60,9 @@ get_preflist_from_key(Key) ->
 %%
 -spec get_primaries_preflist(non_neg_integer()) -> preflist().
 get_primaries_preflist(Key)->
-    %{ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
-    %Itr = chashbin:iterator(Key, CHBin),
-    %{Primaries, _} = chashbin:itr_pop(?N, Itr),
-    %Primaries.
-    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
-    PartitionList = chashbin:to_list(CHBin),
-    Pos = Key rem length(PartitionList) + 1,
-    [lists:nth(Pos, PartitionList)].
-
-
-%% get_logid_from_key(Key,_PrefList) ->
-%%     get_logid_from_key(Key).
-
-%% get_preflist_from_key(Key,{_PrefList,_Length}) ->
-%%     get_preflist_from_key(Key).
+    NumPartitions = replication_check:get_num_partitions(),
+    Pos = Key rem NumPartitions + 1,
+    [replication_check:get_partition_at_index(Pos)].
 
 
 get_logid_from_key(Key,PrefList) ->
