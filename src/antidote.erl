@@ -142,8 +142,9 @@ update_objects(Updates, TxId) ->
 update_objects(Clock, Properties, Updates) ->
     update_objects(Clock, Properties, Updates, false).
 
-update_objects(Clock, _Properties, Updates, StayAlive) ->
+update_objects(_Clock1, _Properties, Updates, StayAlive) ->
     Actor = actor, %% TODO: generate unique actors
+    Clock = ignore,
     Operations = lists:map(
                    fun({{Key, Type, _Bucket}, Op, OpParam}) ->
                            {update, {Key, Type, {{Op,OpParam}, Actor}}}
@@ -177,7 +178,8 @@ update_objects(Clock, _Properties, Updates, StayAlive) ->
 read_objects(Clock, Properties, Objects) ->
     read_objects(Clock, Properties, Objects, false).
 
-read_objects(Clock, _Properties, Objects, StayAlive) ->
+read_objects(_Clock1, _Properties, Objects, StayAlive) ->
+    Clock = ignore,
     Args = lists:map(
              fun({Key, Type, _Bucket}) ->
                      {read, {Key, Type}}
@@ -290,6 +292,7 @@ read(Key, Type) ->
 -spec clocksi_execute_tx(Clock :: snapshot_time(),
                          [client_op()],snapshot_time(),boolean()) -> {ok, {txid(), [snapshot()], snapshot_time()}} | {error, term()}.
 clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive) ->
+    lager:info("I am ~w", [self()]),
     case materializer:check_operations(Operations) of
         {error, Reason} ->
             {error, Reason};

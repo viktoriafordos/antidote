@@ -50,7 +50,7 @@
          read/7,
 	 get_cache_name/2,
 	 store_ss/3,
-         update/2,
+         update/3,
 	 belongs_to_snapshot_op/3]).
 
 %% Callbacks
@@ -98,9 +98,9 @@ get_cache_name(Partition,Base) ->
 
 %%@doc write operation to cache for future read, updates are stored
 %%     one at a time into the ets tables
--spec update(key(), clocksi_payload()) -> ok | {error, reason()}.
-update(Key, DownstreamOp) ->
-    Preflist = log_utilities:get_preflist_from_key(Key),
+-spec update(key(), clocksi_payload(), tuple()) -> ok | {error, reason()}.
+update(Key, DownstreamOp, PreflistTuple) ->
+    Preflist = log_utilities:get_preflist_from_key(Key,PreflistTuple),
     IndexNode = hd(Preflist),
     riak_core_vnode_master:sync_command(IndexNode, {update, Key, DownstreamOp},
                                         materializer_vnode_master).

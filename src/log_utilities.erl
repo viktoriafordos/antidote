@@ -28,6 +28,9 @@
 
 -export([get_preflist_from_key/1,
          get_logid_from_key/1,
+	 get_preflist_from_key/2,
+         get_logid_from_key/2,
+	 get_preflist_tuple/0,
          remove_node_from_preflist/1,
          get_my_node/1
         ]).
@@ -66,6 +69,28 @@ get_primaries_preflist(Key)->
     Pos = Key rem length(PartitionList) + 1,
     [lists:nth(Pos, PartitionList)].
 
+
+%% get_logid_from_key(Key,_PrefList) ->
+%%     get_logid_from_key(Key).
+
+%% get_preflist_from_key(Key,{_PrefList,_Length}) ->
+%%     get_preflist_from_key(Key).
+
+
+get_logid_from_key(Key,PrefList) ->
+    PreflistAnn = get_preflist_from_key(Key,PrefList),
+    remove_node_from_preflist(PreflistAnn).
+
+get_preflist_from_key(Key,{PrefList,Length}) ->
+    ConvertedKey = convert_key(Key),
+    Pos = ConvertedKey rem Length + 1,
+    [erlang:element(Pos,PrefList)].
+
+get_preflist_tuple() ->
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    PartitionList = chashbin:to_list(CHBin),
+    {list_to_tuple(PartitionList),length(PartitionList)}.
+
 get_my_node(Partition) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     riak_core_ring:index_owner(Ring, Partition).
@@ -89,7 +114,8 @@ convert_key(Key) ->
         true ->
             KeyInt = (catch list_to_integer(binary_to_list(Key))),
             case is_integer(KeyInt) of 
-                true -> abs(KeyInt);
+                true -> 
+		    abs(KeyInt);
                 false ->
                     HashedKey = riak_core_util:chash_key({?BUCKET, Key}),
                     abs(crypto:bytes_to_integer(HashedKey))

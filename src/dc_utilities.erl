@@ -36,6 +36,7 @@
   check_staleness/0,
   check_registered/1,
   now/0,
+  print_now/2,
   now_microsec/0,
   now_millisec/0]).
 
@@ -186,3 +187,8 @@ now_microsec() ->
 -spec now_millisec() -> non_neg_integer().
 now_millisec() ->
   now_microsec() div 1000.
+
+print_now(Token,Prev) ->
+    Diff = now_microsec() - Prev,
+    lager:info("At ~w time is ~w~n", [Token, Diff]),
+    now_microsec().

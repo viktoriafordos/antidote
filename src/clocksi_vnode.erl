@@ -72,6 +72,8 @@
     prepared_tx :: cache_id(),
     committed_tx :: cache_id(),
     read_servers :: non_neg_integer(),
+    preflist :: tuple(),
+    dcid :: dcid(),
     prepared_dict :: list()}).
 
 %%%===================================================================
@@ -213,9 +215,13 @@ init([Partition]) ->
     loop_until_started(Partition, ?READ_CONCURRENCY),
     Node = node(),
     true = clocksi_readitem_fsm:check_partition_ready(Node, Partition, ?READ_CONCURRENCY),
+    DcId = dc_utilities:get_my_dc_id(),
+    Preflist = log_utilities:get_preflist_tuple(),
     {ok, #state{partition = Partition,
         prepared_tx = PreparedTx,
         committed_tx = CommittedTx,
+	dcid = DcId,
+	preflist = Preflist,
         read_servers = ?READ_CONCURRENCY,
         prepared_dict = orddict:new()}}.
 
@@ -295,11 +301,12 @@ handle_command({prepare, Transaction, WriteSet}, _Sender,
     State = #state{partition = _Partition,
         committed_tx = CommittedTx,
         prepared_tx = PreparedTx,
+	preflist = Preflist,
 	prepared_dict = PreparedDict
     }) ->
     %lager:info("Trying to prepare ~w,WS ~w", [Transaction, WriteSet]),
     PrepareTime = now_microsec(dc_utilities:now()),
-    {Result, NewPrepare, NewPreparedDict} = prepare(Transaction, WriteSet, CommittedTx, PreparedTx, PrepareTime, PreparedDict),
+    {Result, NewPrepare, NewPreparedDict} = prepare(Transaction, WriteSet, CommittedTx, PreparedTx, PrepareTime, PreparedDict, Preflist),
     case Result of
         {ok, _} ->
             {reply, {prepared, NewPrepare}, State#state{prepared_dict = NewPreparedDict}};
@@ -318,14 +325,17 @@ handle_command({single_commit, Transaction, WriteSet}, _Sender,
     State = #state{partition = _Partition,
         committed_tx = CommittedTx,
         prepared_tx = PreparedTx,
+	preflist = Preflist,
 	prepared_dict = PreparedDict
     }) ->
     PrepareTime = now_microsec(dc_utilities:now()),
-    {Result, NewPrepare, NewPreparedDict} = prepare(Transaction, WriteSet, CommittedTx, PreparedTx, PrepareTime, PreparedDict),
+    {Result, NewPrepare, NewPreparedDict} = prepare(Transaction, WriteSet, CommittedTx, PreparedTx, PrepareTime, PreparedDict, Preflist),
+    %% Time2 = dc_utilities:print_now(prepare_time, PrepareTime),
     NewState = State#state{prepared_dict = NewPreparedDict},
     case Result of
         {ok, _} ->
             ResultCommit = commit(Transaction, NewPrepare, WriteSet, CommittedTx, NewState),
+	    %% _Time3 = dc_utilities:print_now(commit_time, Time2),
             case ResultCommit of
                 {ok, committed, NewPreparedDict2} ->
                     {reply, {committed, NewPrepare}, NewState#state{prepared_dict = NewPreparedDict2}};
@@ -436,7 +446,7 @@ terminate(_Reason, #state{partition = Partition} = _State) ->
 %%% Internal Functions
 %%%===================================================================
 
-prepare(Transaction, TxWriteSet, CommittedTx, PreparedTx, PrepareTime, PreparedDict) ->
+prepare(Transaction, TxWriteSet, CommittedTx, PreparedTx, PrepareTime, PreparedDict, Preflist) ->
     TxId = Transaction#transaction.txn_id,
     case certification_check(TxId, TxWriteSet, CommittedTx, PreparedTx) of
         true ->
@@ -449,8 +459,8 @@ prepare(Transaction, TxWriteSet, CommittedTx, PreparedTx, PrepareTime, PreparedD
                     LogRecord = #log_record{tx_id = TxId,
                         op_type = prepare,
                         op_payload = NewPrepare},
-                    LogId = log_utilities:get_logid_from_key(Key),
-                    [Node] = log_utilities:get_preflist_from_key(Key),
+                    LogId = log_utilities:get_logid_from_key(Key,Preflist),
+                    [Node] = log_utilities:get_preflist_from_key(Key,Preflist),
                     Result = logging_vnode:append(Node, LogId, LogRecord),
                     {Result, NewPrepare, NewPreparedDict};
                 _ ->
@@ -484,9 +494,9 @@ reset_prepared(PreparedTx, [{Key, _Type, {_Op, _Actor}} | Rest], TxId, Time, Act
     true = ets:insert(PreparedTx, {Key, [{TxId, Time} | dict:fetch(Key, ActiveTxs)]}),
     reset_prepared(PreparedTx, Rest, TxId, Time, ActiveTxs).
 
-commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
+commit(Transaction, TxCommitTime, Updates, CommittedTx, State = #state{preflist = Preflist, dcid = DcId}) ->
     TxId = Transaction#transaction.txn_id,
-    DcId = dc_utilities:get_my_dc_id(),
+    %% DcId = dc_utilities:get_my_dc_id(),
     LogRecord = #log_record{tx_id = TxId,
         op_type = commit,
         op_payload = {{DcId, TxCommitTime},
@@ -500,11 +510,11 @@ commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
 		_ ->
 		    ok
 	    end,
-            LogId = log_utilities:get_logid_from_key(Key),
-            [Node] = log_utilities:get_preflist_from_key(Key),
+            LogId = log_utilities:get_logid_from_key(Key,Preflist),
+            [Node] = log_utilities:get_preflist_from_key(Key,Preflist),
             case logging_vnode:append_commit(Node, LogId, LogRecord) of
                 {ok, _} ->
-                    case update_materializer(Updates, Transaction, TxCommitTime) of
+                    case update_materializer(Updates, Transaction, TxCommitTime, Preflist, DcId) of
                         ok ->
                             NewPreparedDict = clean_and_notify(TxId, Updates, State),
                             {ok, committed, NewPreparedDict};
@@ -620,10 +630,10 @@ check_prepared(TxId, PreparedTx, Key) ->
     end.
 
 -spec update_materializer(DownstreamOps :: [{key(), type(), op()}],
-    Transaction :: tx(), TxCommitTime :: {term(), term()}) ->
+    Transaction :: tx(), TxCommitTime :: {term(), term()}, tuple(), dcid()) ->
     ok | error.
-update_materializer(DownstreamOps, Transaction, TxCommitTime) ->
-    DcId = dc_utilities:get_my_dc_id(),
+update_materializer(DownstreamOps, Transaction, TxCommitTime,Preflist,DcId) ->
+    %% DcId = dc_utilities:get_my_dc_id(),
     ReversedDownstreamOps = lists:reverse(DownstreamOps),
     UpdateFunction = fun({Key, Type, Op}, AccIn) ->
 			     CommittedDownstreamOp =
@@ -634,7 +644,7 @@ update_materializer(DownstreamOps, Transaction, TxCommitTime) ->
 				    snapshot_time = Transaction#transaction.vec_snapshot_time,
 				    commit_time = {DcId, TxCommitTime},
 				    txid = Transaction#transaction.txn_id},
-			     [materializer_vnode:update(Key, CommittedDownstreamOp) | AccIn]
+			     [materializer_vnode:update(Key, CommittedDownstreamOp, Preflist) | AccIn]
 		     end,
     Results = lists:foldl(UpdateFunction, [], ReversedDownstreamOps),
     Failures = lists:filter(fun(Elem) -> Elem /= ok end, Results),

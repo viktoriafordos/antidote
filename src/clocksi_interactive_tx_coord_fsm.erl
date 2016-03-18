@@ -190,12 +190,15 @@ create_transaction_record(ClientClock, UpdateClock, StayAlive, From, IsStatic) -
 -spec perform_singleitem_read(key(), type()) -> {ok, val(), snapshot_time()} | {error, reason()}.
 perform_singleitem_read(Key, Type) ->
     {Transaction, _TransactionId} = create_transaction_record(ignore, update_clock, false, undefined, true),
+    %% Time = dc_utilities:print_now(start, 0),
     Preflist = log_utilities:get_preflist_from_key(Key),
+    %% Time2 = dc_utilities:print_now(prefilst, Time),
     IndexNode = hd(Preflist),
     case clocksi_readitem_fsm:read_data_item(IndexNode, Key, Type, Transaction) of
         {error, Reason} ->
             {error, Reason};
         {ok, Snapshot} ->
+	    %% _Time3 = dc_utilities:print_now(afterread, Time2),
             ReadResult = Type:value(Snapshot),
             %% Read only transaction has no commit, hence return the snapshot time
             CommitTime = Transaction#transaction.vec_snapshot_time,
@@ -208,25 +211,32 @@ perform_singleitem_read(Key, Type) ->
 %%      because the update/prepare/commit are all done at one time
 -spec perform_singleitem_update(key(), type(), {op(), term()}) -> {ok, {txid(), [], snapshot_time()}} | {error, term()}.
 perform_singleitem_update(Key, Type, Params) ->
+    %% Time1 = dc_utilities:print_now(startwrite, 0),
     {Transaction, _TransactionId} = create_transaction_record(ignore, update_clock, false, undefined, true),
     Preflist = log_utilities:get_preflist_from_key(Key),
     IndexNode = hd(Preflist),
+    %% Time2 = dc_utilities:print_now(preflistwrite, Time1),
     case ?CLOCKSI_DOWNSTREAM:generate_downstream_op(Transaction, IndexNode, Key, Type, Params, []) of
         {ok, DownstreamRecord} ->
+	    %% Time3 = dc_utilities:print_now(preflistwrite_done_read, Time2),
             Updated_partitions = [{IndexNode, [{Key, Type, DownstreamRecord}]}],
             TxId = Transaction#transaction.txn_id,
             LogRecord = #log_record{tx_id = TxId, op_type = update,
                 op_payload = {Key, Type, DownstreamRecord}},
             LogId = ?LOG_UTIL:get_logid_from_key(Key),
             [Node] = Preflist,
+	    %% Time4 = dc_utilities:print_now(preflistwrite_done_pref, Time3),
             case ?LOGGING_VNODE:append(Node, LogId, LogRecord) of
                 {ok, _} ->
+		    %% Time5 = dc_utilities:print_now(preflistwrite_done_log, Time4),
                     case ?CLOCKSI_VNODE:single_commit_sync(Updated_partitions, Transaction) of
                         {committed, CommitTime} ->
+			    %% Time6 = dc_utilities:print_now(preflistwrite_committed, Time5),
                             TxId = Transaction#transaction.txn_id,
                             DcId = ?DC_UTIL:get_my_dc_id(),
                             CausalClock = ?VECTORCLOCK:set_clock_of_dc(
                                 DcId, CommitTime, Transaction#transaction.vec_snapshot_time),
+			    %% _Time7 = dc_utilities:print_now(preflistwrite_reply, Time6),
                             {ok, {TxId, [], CausalClock}};
 			abort ->
 			    {error, aborted};
@@ -243,7 +253,9 @@ perform_singleitem_update(Key, Type, Params) ->
 
 perform_read(Args, Updated_partitions, Transaction, Sender) ->
     {Key, Type} = Args,
+    %% Time1 = dc_utilities:print_now(start, 0),
     Preflist = ?LOG_UTIL:get_preflist_from_key(Key),
+    %% Time2 = dc_utilities:print_now(prefilst, Time1),
     IndexNode = hd(Preflist),
     WriteSet = case lists:keyfind(IndexNode, 1, Updated_partitions) of
                    false ->
@@ -261,6 +273,7 @@ perform_read(Args, Updated_partitions, Transaction, Sender) ->
             end,
             {error, Reason};
         {ok, Snapshot} ->
+	    %% _Time3 = dc_utilities:print_now(read, Time2),    
             Type:value(Snapshot)
     end.
 
