@@ -184,4 +184,6 @@ broadcast(State, Txn) ->
 %% @doc Sends an async request to get the smallest snapshot time of active transactions.
 %%      No new updates with smaller timestamp will occur in future.
 get_stable_time(Partition) ->
-    ok = logging_vnode:get_stable_time({Partition, node()}).
+    %%ok = logging_vnode:get_stable_time({Partition, node()}).
+    Time = clocksi_vnode:now_microsec(dc_utilities:now()),
+    ok = inter_dc_log_sender_vnode:send_stable_time(Partition, Time).

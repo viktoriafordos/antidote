@@ -215,16 +215,13 @@ init([Partition]) ->
     loop_until_started(Partition, ?READ_CONCURRENCY),
     Node = node(),
     true = clocksi_readitem_fsm:check_partition_ready(Node, Partition, ?READ_CONCURRENCY),
-    DcId = dc_utilities:get_my_dc_id(),
-    Preflist = log_utilities:get_preflist_tuple(),
     {ok, #state{partition = Partition,
         prepared_tx = PreparedTx,
         committed_tx = CommittedTx,
-	dcid = DcId,
-	preflist = Preflist,
+	dcid = undefined,
+	preflist = undefined,
         read_servers = ?READ_CONCURRENCY,
         prepared_dict = orddict:new()}}.
-
 
 %% @doc The table holding the prepared transactions is shared with concurrent
 %%      readers, so they can safely check if a key they are reading is being updated.
@@ -234,7 +231,6 @@ check_tables_ready() ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     PartitionList = chashbin:to_list(CHBin),
     check_table_ready(PartitionList).
-
 
 check_table_ready([]) ->
     true;
@@ -249,7 +245,6 @@ check_table_ready([{Partition, Node} | Rest]) ->
         false ->
             false
     end.
-
 
 open_table(Partition) ->
     case ets:info(get_cache_name(Partition, prepared)) of
@@ -297,6 +292,10 @@ handle_command({check_servers_ready}, _Sender, SD0 = #state{partition = Partitio
     Result = clocksi_readitem_fsm:check_partition_ready(Node, Partition, ?READ_CONCURRENCY),
     {reply, Result, SD0};
 
+handle_command({prepare, Transaction, WriteSet}, Sender,
+	       State = #state{preflist = undefined, dcid = undefined}) ->
+    handle_command({prepare, Transaction, WriteSet}, Sender,
+		   State#state{preflist = log_utilities:get_preflist_tuple(), dcid = replication_check:get_my_dc_id()});
 handle_command({prepare, Transaction, WriteSet}, _Sender,
     State = #state{partition = _Partition,
         committed_tx = CommittedTx,
@@ -321,6 +320,10 @@ handle_command({prepare, Transaction, WriteSet}, _Sender,
 %% @doc This is the only partition being updated by a transaction,
 %%      thus this function performs both the prepare and commit for the
 %%      coordinator that sent the request.
+handle_command({single_commit, Transaction, WriteSet}, Sender,
+	       State = #state{preflist = undefined, dcid = undefined}) ->
+    handle_command({single_commit, Transaction, WriteSet}, Sender,
+		   State#state{preflist = log_utilities:get_preflist_tuple(), dcid = replication_check:get_my_dc_id()});
 handle_command({single_commit, Transaction, WriteSet}, _Sender,
     State = #state{partition = _Partition,
         committed_tx = CommittedTx,
@@ -358,6 +361,10 @@ handle_command({single_commit, Transaction, WriteSet}, _Sender,
 %% TODO: sending empty writeset to clocksi_downstream_generatro
 %% Just a workaround, need to delete downstream_generator_vnode
 %% eventually.
+handle_command({commit, Transaction, TxCommitTime, Updates}, Sender,
+	       State = #state{preflist = undefined, dcid = undefined}) ->
+    handle_command({commit, Transaction, TxCommitTime, Updates}, Sender,
+		   State#state{preflist = log_utilities:get_preflist_tuple(), dcid = replication_check:get_my_dc_id()});
 handle_command({commit, Transaction, TxCommitTime, Updates}, _Sender,
     #state{partition = _Partition,
         committed_tx = CommittedTx
@@ -494,22 +501,14 @@ reset_prepared(PreparedTx, [{Key, _Type, {_Op, _Actor}} | Rest], TxId, Time, Act
     true = ets:insert(PreparedTx, {Key, [{TxId, Time} | dict:fetch(Key, ActiveTxs)]}),
     reset_prepared(PreparedTx, Rest, TxId, Time, ActiveTxs).
 
-commit(Transaction, TxCommitTime, Updates, CommittedTx, State = #state{preflist = Preflist, dcid = DcId}) ->
+commit(Transaction, TxCommitTime, Updates, _CommittedTx, State = #state{preflist = Preflist, dcid = DcId}) ->
     TxId = Transaction#transaction.txn_id,
-    %% DcId = dc_utilities:get_my_dc_id(),
     LogRecord = #log_record{tx_id = TxId,
         op_type = commit,
         op_payload = {{DcId, TxCommitTime},
             Transaction#transaction.vec_snapshot_time}},
     case Updates of
         [{Key, _Type, {_Op, _Param}} | _Rest] ->
-	    case application:get_env(antidote,txn_cert) of
-		{ok, true} ->
-		    lists:foreach(fun({K, _, _}) -> true = ets:insert(CommittedTx, {K, TxCommitTime}) end,
-				  Updates);
-		_ ->
-		    ok
-	    end,
             LogId = log_utilities:get_logid_from_key(Key,Preflist),
             [Node] = log_utilities:get_preflist_from_key(Key,Preflist),
             case logging_vnode:append_commit(Node, LogId, LogRecord) of
@@ -583,57 +582,14 @@ clean_prepared(PreparedTx, [{Key, _Type, {_Op, _Actor}} | Rest], TxId) ->
 now_microsec({MegaSecs, Secs, MicroSecs}) ->
     (MegaSecs * 1000000 + Secs) * 1000000 + MicroSecs.
 
-certification_check(TxId, Updates, CommittedTx, PreparedTx) ->
-    case application:get_env(antidote, txn_cert) of
-        {ok, true} -> 
-        %io:format("AAAAH"),
-        certification_with_check(TxId, Updates, CommittedTx, PreparedTx);
-        _  -> true
-    end.
+certification_check(_TxId, _Updates, _CommittedTx, _PreparedTx) ->
+    true.
 
-%% @doc Performs a certification check when a transaction wants to move
-%%      to the prepared state.
-certification_with_check(_, [], _, _) ->
-    true;
-certification_with_check(TxId, [H | T], CommittedTx, PreparedTx) ->
-    SnapshotTime = TxId#tx_id.snapshot_time,
-    {Key, _, _} = H,
-    case ets:lookup(CommittedTx, Key) of
-        [{Key, CommitTime}] ->
-            case CommitTime > SnapshotTime of
-                true ->
-                    false;
-                false ->
-                    case check_prepared(TxId, PreparedTx, Key) of
-                        true ->
-                            certification_with_check(TxId, T, CommittedTx, PreparedTx);
-                        false ->
-                            false
-                    end
-            end;
-        [] ->
-            case check_prepared(TxId, PreparedTx, Key) of
-                true ->
-                    certification_with_check(TxId, T, CommittedTx, PreparedTx);
-                false ->
-                    false
-            end
-    end.
-
-check_prepared(TxId, PreparedTx, Key) ->
-    _SnapshotTime = TxId#tx_id.snapshot_time,
-    case ets:lookup(PreparedTx, Key) of
-        [] ->
-            true;
-        _ ->
-            false
-    end.
 
 -spec update_materializer(DownstreamOps :: [{key(), type(), op()}],
     Transaction :: tx(), TxCommitTime :: {term(), term()}, tuple(), dcid()) ->
     ok | error.
 update_materializer(DownstreamOps, Transaction, TxCommitTime,Preflist,DcId) ->
-    %% DcId = dc_utilities:get_my_dc_id(),
     ReversedDownstreamOps = lists:reverse(DownstreamOps),
     UpdateFunction = fun({Key, Type, Op}, AccIn) ->
 			     CommittedDownstreamOp =

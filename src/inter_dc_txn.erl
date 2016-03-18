@@ -49,7 +49,7 @@ from_ops(Ops, Partition, PrevLogOpId) ->
 
 -spec ping(partition_id(), log_opid(), non_neg_integer()) -> #interdc_txn{}.
 ping(Partition, PrevLogOpId, Timestamp) -> #interdc_txn{
-  dcid = dc_utilities:get_my_dc_id(),
+  dcid = replication_check:get_my_dc_id(),
   partition = Partition,
   prev_log_opid = PrevLogOpId,
   operations = [],
@@ -70,7 +70,7 @@ last_log_opid(Txn = #interdc_txn{operations = Ops, prev_log_opid = LogOpId}) ->
   end.
 
 -spec is_local(#interdc_txn{}) -> boolean().
-is_local(#interdc_txn{dcid = DCID}) -> DCID == dc_utilities:get_my_dc_id().
+is_local(#interdc_txn{dcid = DCID}) -> DCID == replication_check:get_my_dc_id().
 
 -spec is_ping(#interdc_txn{}) -> boolean().
 is_ping(#interdc_txn{operations = Ops}) -> Ops == [].

@@ -36,6 +36,7 @@
 	 broadcast_meta_data/2,
 	 broadcast_meta_data_list/1,
 	 broadcast_meta_data_merge/4,
+	 generate_server_name/1,
 	 read_meta_data/1]).
 	 
 %% Internal API
@@ -123,8 +124,8 @@ handle_call({merge_meta_data,Key,Value,MergeFunc,InitFunc}, _Sender, State = #st
     Prev = case ets:lookup(?TABLE_NAME, Key) of
 	       [] ->
 		   InitFunc();
-	       [{Key, Value}]->
-		   Value
+	       [{Key, PrevVal}]->
+		   PrevVal
 	   end,
     true = ets:insert(Table, {Key,MergeFunc(Value,Prev)}),
     ok = dets:insert(DetsTable, {Key,Value}),

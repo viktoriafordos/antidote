@@ -381,9 +381,9 @@ snapshot_insert_gc(Key, SnapshotDict, SnapshotCache, OpsCache,ShouldGc)->
 				 ListLen * 2;
 			     false ->
 				 HalfListLen = ListLen div 2,
-				 case HalfListLen =< ?OPS_THRESHOLD of
+				 case HalfListLen < ?OPS_THRESHOLD of
 				     true ->
-					 ?OPS_THRESHOLD;
+					 ListLen;
 				     false ->
 					 case HalfListLen - ?RESIZE_THRESHOLD > NewLength of
 					     true ->

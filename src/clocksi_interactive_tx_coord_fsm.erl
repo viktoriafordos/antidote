@@ -38,7 +38,7 @@
 -define(CLOCKSI_DOWNSTREAM, mock_partition_fsm).
 -define(LOGGING_VNODE, mock_partition_fsm).
 -else.
--define(DC_UTIL, dc_utilities).
+-define(DC_UTIL, replication_check).
 -define(VECTORCLOCK, vectorclock).
 -define(LOG_UTIL, log_utilities).
 -define(CLOCKSI_VNODE, clocksi_vnode).
@@ -239,14 +239,18 @@ perform_singleitem_update(Key, Type, Params) ->
 			    %% _Time7 = dc_utilities:print_now(preflistwrite_reply, Time6),
                             {ok, {TxId, [], CausalClock}};
 			abort ->
+			    lager:info("error here4 ~p", [abort]),
 			    {error, aborted};
                         {error, Reason} ->
+			    lager:info("error here3 ~p", [Reason]),
                             {error, Reason}
                     end;
                 Error ->
+		    lager:info("error here2 ~p", [Error]),
                     {error, Error}
             end;
         {error, Reason} ->
+	    lager:info("error here ~p", [Reason]),
             {error, Reason}
     end.
 
