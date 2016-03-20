@@ -287,7 +287,6 @@ internal_read(Key, Type, MinSnapshotTime, TxId, OpsCache, SnapshotCache,ShouldGc
 		     case vector_orddict:get_smaller(MinSnapshotTime, SnapshotDict) of
 			 {undefined, _IsF} ->
 			     %% {error, no_snapshot};
-			     lager:info("not in ets, going to log"),
 			     BlankSS = {0,clocksi_materializer:new(Type)},
 			     {BlankSS,ignore,true};
 			 {{SCT, LS},IsF}->
