@@ -61,6 +61,7 @@
 
 -record(state, {partition :: partition_id(),
 		logs_map :: dict(),
+		log,
 		clock :: non_neg_integer(),
 		senders_awaiting_ack :: dict(),
 		last_read :: term()}).
@@ -168,18 +169,15 @@ get(IndexNode, Command) ->
 %%      `log' and the partition identifier.
 init([Partition]) ->
     LogFile = integer_to_list(Partition),
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    GrossPreflists = riak_core_ring:all_preflists(Ring, ?N),
-    Preflists = lists:filter(fun(X) -> preflist_member(Partition, X) end, GrossPreflists),
     lager:info("Opening logs for partition ~w", [Partition]),
-    case open_logs(LogFile, Preflists, dict:new()) of
+    case open_log(LogFile, Partition) of
         {error, Reason} ->
 	    lager:error("ERROR: opening logs for partition ~w, reason ~w", [Partition, Reason]),
             {error, Reason};
-        Map ->
+        {ok,Log} ->
 	    lager:info("Done opening logs for partition ~w", [Partition]),
             {ok, #state{partition=Partition,
-                        logs_map=Map,
+			log = Log,
                         clock=0,
                         senders_awaiting_ack=dict:new(),
                         last_read=start}}
@@ -197,23 +195,18 @@ handle_command({get_stable_time}, _Sender,
 %% @doc Read command: Returns the operations logged for Key
 %%          Input: The id of the log to be read
 %%      Output: {ok, {vnode_id, Operations}} | {error, Reason}
-handle_command({read, LogId}, _Sender,
-               #state{partition=Partition, logs_map=Map}=State) ->
-    case get_log_from_map(Map, Partition, LogId) of
-        {ok, Log} ->
-           {Continuation, Ops} = 
-                case disk_log:chunk(Log, start) of
-                    {C, O} -> {C,O};
-                    {C, O, _} -> {C,O};
-                    eof -> {eof, []}
-                end,
-            case Continuation of
-                error -> {reply, {error, Ops}, State};
-                eof -> {reply, {ok, Ops}, State#state{last_read=start}};
-                _ -> {reply, {ok, Ops}, State#state{last_read=Continuation}}
-            end;
-        {error, Reason} ->
-            {reply, {error, Reason}, State}
+handle_command({read, _LogId}, _Sender,
+               #state{partition=_Partition, log=Log}=State) ->
+    {Continuation, Ops} = 
+	case disk_log:chunk(Log, start) of
+	    {C, O} -> {C,O};
+	    {C, O, _} -> {C,O};
+	    eof -> {eof, []}
+	end,
+    case Continuation of
+	error -> {reply, {error, Ops}, State};
+	eof -> {reply, {ok, Ops}, State#state{last_read=start}};
+	_ -> {reply, {ok, Ops}, State#state{last_read=Continuation}}
     end;
 
 %% @doc Threshold read command: Returns the operations logged for Key
@@ -223,25 +216,20 @@ handle_command({read, LogId}, _Sender,
 %%              LogId: Identifies the log to be read
 %%      Output: {vnode_id, Operations} | {error, Reason}
 %%
-handle_command({read_from, LogId, _From}, _Sender,
-               #state{partition=Partition, logs_map=Map, last_read=Lastread}=State) ->
-    case get_log_from_map(Map, Partition, LogId) of
-        {ok, Log} ->
+handle_command({read_from, _LogId, _From}, _Sender,
+               #state{partition=_Partition, log=Log, last_read=Lastread}=State) ->
             ok = disk_log:sync(Log),
-            {Continuation, Ops} = 
-                case disk_log:chunk(Log, Lastread) of
-                    {error, Reason} -> {error, Reason};
-                    {C, O} -> {C,O};
-                    {C, O, _} -> {C,O};
-                    eof -> {eof, []}
-                end,
-            case Continuation of
-                error -> {reply, {error, Ops}, State};
-                eof -> {reply, {ok, Ops}, State};
-                _ -> {reply, {ok, Ops}, State#state{last_read=Continuation}}
-            end;
-        {error, Reason} ->
-            {reply, {error, Reason}, State}
+    {Continuation, Ops} = 
+	case disk_log:chunk(Log, Lastread) of
+	    {error, Reason} -> {error, Reason};
+	    {C, O} -> {C,O};
+	    {C, O, _} -> {C,O};
+	    eof -> {eof, []}
+	end,
+    case Continuation of
+	error -> {reply, {error, Ops}, State};
+	eof -> {reply, {ok, Ops}, State};
+	_ -> {reply, {ok, Ops}, State#state{last_read=Continuation}}
     end;
 
 %% @doc Append command: Appends a new op to the Log of Key
@@ -252,56 +240,46 @@ handle_command({read_from, LogId, _From}, _Sender,
 %%      Output: {ok, {vnode_id, op_id}} | {error, Reason}
 %%
 handle_command({append, LogId, Payload, Sync}, _Sender,
-               #state{logs_map=Map,
+               #state{log=Log,
                       clock=Clock,
                       partition=Partition}=State) ->
     OpId = generate_op_id(Clock),
     {NewClock, _Node} = OpId,
-    case get_log_from_map(Map, Partition, LogId) of
-        {ok, Log} ->
-            Operation = #operation{op_number = OpId, payload = Payload},
-            case insert_operation(Log, LogId, Operation) of
-                {ok, OpId} ->
-                  inter_dc_log_sender_vnode:send(Partition, Operation),
-		    case Sync of
-			true ->
-			    case disk_log:sync(Log) of
-				ok ->
-				    {reply, {ok, OpId}, State#state{clock=NewClock}};
-				{error, Reason} ->
-				    {reply, {error, Reason}, State}
-			    end;
-			false ->
-			    {reply, {ok, OpId}, State#state{clock=NewClock}}
+    Operation = #operation{op_number = OpId, payload = Payload},
+    case insert_operation(Log, LogId, Operation) of
+	{ok, OpId} ->
+	    inter_dc_log_sender_vnode:send(Partition, Operation),
+	    case Sync of
+		true ->
+		    case disk_log:sync(Log) of
+			ok ->
+			    {reply, {ok, OpId}, State#state{clock=NewClock}};
+			{error, Reason} ->
+			    {reply, {error, Reason}, State}
 		    end;
-                {error, Reason} ->
-                    {reply, {error, Reason}, State}
-            end;
-        {error, Reason} ->
-            {reply, {error, Reason}, State}
+		false ->
+		    {reply, {ok, OpId}, State#state{clock=NewClock}}
+	    end;
+	{error, Reason} ->
+	    {reply, {error, Reason}, State}
     end;
 
 
 handle_command({append_group, LogId, PayloadList, IsLocal}, _Sender,
-               #state{logs_map=Map,
+               #state{log=Log,
                       clock=Clock,
                       partition=Partition}=State) ->
     {ErrorList, SuccList, _NNC} = lists:foldl(fun(Payload, {AccErr, AccSucc,NewClock}) ->
 						      OpId = generate_op_id(NewClock),
 						      {NewNewClock, _Node} = OpId,
-						      case get_log_from_map(Map, Partition, LogId) of
-							  {ok, Log} ->
-                    Operation = #operation{op_number = OpId, payload = Payload},
-							      case insert_operation(Log, LogId, Operation) of
-								  {ok, OpId} ->
-                      case IsLocal of
-                        true -> inter_dc_log_sender_vnode:send(Partition, Operation);
-                        false -> ok
-                      end,
-								      {AccErr, AccSucc ++ [OpId], NewNewClock};
-								  {error, Reason} ->
-								      {AccErr ++ [{reply, {error, Reason}, State}], AccSucc,NewNewClock}
-							      end;
+						      Operation = #operation{op_number = OpId, payload = Payload},
+						      case insert_operation(Log, LogId, Operation) of
+							  {ok, OpId} ->
+							      case IsLocal of
+								  true -> inter_dc_log_sender_vnode:send(Partition, Operation);
+								  false -> ok
+							      end,
+							      {AccErr, AccSucc ++ [OpId], NewNewClock};
 							  {error, Reason} ->
 							      {AccErr ++ [{reply, {error, Reason}, State}], AccSucc,NewNewClock}
 						      end
@@ -316,19 +294,14 @@ handle_command({append_group, LogId, PayloadList, IsLocal}, _Sender,
 	    {reply, Error, State}
     end;
 
-handle_command({get, LogId, MinSnapshotTime, Type, Key}, _Sender,
-    #state{logs_map = Map, clock = _Clock, partition = Partition} = State) ->
-    case get_log_from_map(Map, Partition, LogId) of
-        {ok, Log} ->
-            case get_ops_from_log(Log, Key, start, MinSnapshotTime, dict:new(), []) of
-                {error, Reason} ->
-                    {reply, {error, Reason}, State};
-                CommitedOpsForKey ->
-                    {reply, {length(CommitedOpsForKey), CommitedOpsForKey, {0,clocksi_materializer:new(Type)},
-                        vectorclock:new(), false}, State}
-            end;
-        {error, Reason} ->
-            {reply, {error, Reason}, State}
+handle_command({get, _LogId, MinSnapshotTime, Type, Key}, _Sender,
+    #state{log = Log, clock = _Clock, partition = _Partition} = State) ->
+    case get_ops_from_log(Log, Key, start, MinSnapshotTime, dict:new(), []) of
+	{error, Reason} ->
+	    {reply, {error, Reason}, State};
+	CommitedOpsForKey ->
+	    {reply, {length(CommitedOpsForKey), CommitedOpsForKey, {0,clocksi_materializer:new(Type)},
+		     vectorclock:new(), false}, State}
     end;
 
 handle_command(_Message, _Sender, State) ->
@@ -409,11 +382,9 @@ handle_commit(TxId, OpPayload, T, Key, MinSnapshotTime, Ops, CommitedOps) ->
             filter_terms_for_key(T, Key, MinSnapshotTime, Ops, CommitedOps)
     end.
 
-handle_handoff_command(?FOLD_REQ{foldfun=FoldFun, acc0=Acc0}, _Sender,
-                       #state{logs_map=Map}=State) ->
-    F = fun({Key, Operation}, Acc) -> FoldFun(Key, Operation, Acc) end,
-    Acc = join_logs(dict:to_list(Map), F, Acc0),
-    {reply, Acc, State}.
+handle_handoff_command(_Msg, _Sender,
+                       State) ->
+    {noreply, State}.
 
 handoff_starting(_TargetNode, State) ->
     {true, State}.
@@ -424,29 +395,14 @@ handoff_cancelled(State) ->
 handoff_finished(_TargetNode, State) ->
     {ok, State}.
 
-handle_handoff_data(Data, #state{partition=Partition, logs_map=Map}=State) ->
-    {LogId, Operation} = binary_to_term(Data),
-    case get_log_from_map(Map, Partition, LogId) of
-        {ok, Log} ->
-            %% Optimistic handling; crash otherwise.
-            {ok, _OpId} = insert_operation(Log, LogId, Operation),
-            ok = disk_log:sync(Log),
-            {reply, ok, State};
-        {error, Reason} ->
-            {reply, {error, Reason}, State}
-    end.
+handle_handoff_data(_Data, State) ->
+    {reply, ok, State}.
 
 encode_handoff_item(Key, Operation) ->
     term_to_binary({Key, Operation}).
 
-is_empty(State=#state{logs_map=Map}) ->
-    LogIds = dict:fetch_keys(Map),
-    case no_elements(LogIds, Map) of
-        true ->
-            {true, State};
-        false ->
-            {false, State}
-    end.
+is_empty(State) ->
+    {true, State}.
 
 delete(State) ->
     {ok, State}.
@@ -481,99 +437,21 @@ terminate(_Reason, _State) ->
 %% Internal Functions %%
 %%====================%%
 
-%% @doc no_elements: checks whether any of the logs contains any data
-%%      Input:  LogIds: Each logId is a preflist that represents one log
-%%              Map: the dictionary that relates the preflist with the
-%%              actual log
-%%      Return: true if all logs are empty. false if at least one log
-%%              contains data.
-%%
--spec no_elements([log_id()], dict()) -> boolean().
-no_elements([], _Map) ->
-    true;
-no_elements([LogId|Rest], Map) ->
-    case dict:find(LogId, Map) of
-        {ok, Log} -> 
-            case disk_log:chunk(Log, start) of
-                eof ->
-                    no_elements(Rest, Map);
-                _ ->
-                    false
-            end;
-        error ->
-            {error, no_log_for_preflist}
-    end.
 
-%% @doc open_logs: open one log per partition in which the vnode is primary
-%%      Input:  LogFile: Partition concat with the atom log
-%%                      Preflists: A list with the preflist in which
-%%                                 the vnode is involved
-%%                      Initial: Initial log identifier. Non negative
-%%                               integer. Consecutive ids for the logs.
-%%                      Map: The ongoing map of preflist->log. dict()
-%%                           type.
-%%      Return:         LogsMap: Maps the  preflist and actual name of
-%%                               the log in the system. dict() type.
-%%
--spec open_logs(string(), [preflist()], dict()) -> dict() | {error, reason()}.
-open_logs(_LogFile, [], Map) ->
-    Map;
-open_logs(LogFile, [Next|Rest], Map)->
-    PartitionList = log_utilities:remove_node_from_preflist(Next),
-    PreflistString = string:join(
-                       lists:map(fun erlang:integer_to_list/1, PartitionList), "-"),
-    LogId = LogFile ++ "--" ++ PreflistString,
+
+open_log(LogFile, Partition)->
+    LogId = LogFile ++ "--" ++ integer_to_list(Partition),
     LogPath = filename:join(
                 app_helper:get_env(riak_core, platform_data_dir), LogId),
     case disk_log:open([{name, LogPath}]) of
         {ok, Log} ->
-            Map2 = dict:store(PartitionList, Log, Map),
-            open_logs(LogFile, Rest, Map2);
+	    {ok, Log};
         {repaired, Log, _, _} ->
-            lager:info("Repaired log ~p", [Log]),
-            Map2 = dict:store(PartitionList, Log, Map),
-            open_logs(LogFile, Rest, Map2);
+	    {ok, Log};
         {error, Reason} ->
             {error, Reason}
     end.
 
-%% @doc get_log_from_map: abstracts the get function of a key-value store
-%%              currently using dict
-%%      Input:  Map:  dict that representes the map
-%%              LogId:  identifies the log.
-%%      Return: The actual name of the log
-%%
--spec get_log_from_map(dict(), partition(), log_id()) ->
-                              {ok, log()} | {error, no_log_for_preflist}.
-get_log_from_map(Map, _Partition, LogId) ->
-    case dict:find(LogId, Map) of
-        {ok, Log} ->
-           {ok, Log};
-        error ->
-            {error, no_log_for_preflist}
-    end.
-
-%% @doc join_logs: Recursive fold of all the logs stored in the vnode
-%%      Input:  Logs: A list of pairs {Preflist, Log}
-%%                      F: Function to apply when floding the log (dets)
-%%                      Acc: Folded data
-%%      Return: Folded data of all the logs.
-%%
--spec join_logs([{preflist(), log()}], fun(), term()) -> term().
-join_logs([], _F, Acc) ->
-    Acc;
-join_logs([{_Preflist, Log}|T], F, Acc) ->
-    JointAcc = fold_log(Log, start, F, Acc),
-    join_logs(T, F, JointAcc).
-
-fold_log(Log, Continuation, F, Acc) ->
-    case  disk_log:chunk(Log,Continuation) of 
-        eof ->
-            Acc;
-        {Next,Ops} ->
-            NewAcc = lists:foldl(F, Acc, Ops),
-            fold_log(Log, Next, F, NewAcc)
-    end.
 
 
 %% @doc insert_operation: Inserts an operation into the log only if the
@@ -596,44 +474,6 @@ insert_operation(Log, LogId, Operation) ->
             {error, Reason}
     end.
 
-%% @doc preflist_member: Returns true if the Partition identifier is
-%%              part of the Preflist
-%%      Input:  Partition: The partition identifier to check
-%%              Preflist: A list of pairs {Partition, Node}
-%%      Return: true | false
-%%
--spec preflist_member(partition(), preflist()) -> boolean().
-preflist_member(Partition,Preflist) ->
-    lists:any(fun({P, _}) -> P =:= Partition end, Preflist).
-
 generate_op_id(Current) ->
     {Current + 1, node()}.
 
--ifdef(TEST).
-
-%% @doc Testing get_log_from_map works in both situations, when the key
-%%      is in the map and when the key is not in the map
-get_log_from_map_test() ->
-    Dict = dict:new(),
-    Dict2 = dict:store([antidote1, c], value1, Dict),
-    Dict3 = dict:store([antidote2, c], value2, Dict2),
-    Dict4 = dict:store([antidote3, c], value3, Dict3),
-    Dict5 = dict:store([antidote4, c], value4, Dict4),
-    ?assertEqual({ok, value3}, get_log_from_map(Dict5, undefined,
-            [antidote3,c])),
-    ?assertEqual({error, no_log_for_preflist}, get_log_from_map(Dict5,
-            undefined, [antidote5, c])).
-
-%% @doc Testing that preflist_member returns true when there is a
-%%      match.
-preflist_member_true_test() ->
-    Preflist = [{partition1, node},{partition2, node},{partition3, node}],
-    ?assertEqual(true, preflist_member(partition1, Preflist)).
-
-%% @doc Testing that preflist_member returns false when there is no
-%%      match.
-preflist_member_false_test() ->
-    Preflist = [{partition1, node},{partition2, node},{partition3, node}],
-    ?assertEqual(false, preflist_member(partition5, Preflist)).
-
--endif.
