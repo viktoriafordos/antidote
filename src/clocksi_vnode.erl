@@ -212,9 +212,9 @@ get_cache_name(Partition, Base) ->
 init([Partition]) ->
     PreparedTx = open_table(Partition),
     CommittedTx = ets:new(committed_tx, [set]),
-    loop_until_started(Partition, ?READ_CONCURRENCY),
-    Node = node(),
-    true = clocksi_readitem_fsm:check_partition_ready(Node, Partition, ?READ_CONCURRENCY),
+    %% loop_until_started(Partition, ?READ_CONCURRENCY),
+    %% Node = node(),
+    %% true = clocksi_readitem_fsm:check_partition_ready(Node, Partition, ?READ_CONCURRENCY),
     {ok, #state{partition = Partition,
         prepared_tx = PreparedTx,
         committed_tx = CommittedTx,
@@ -268,6 +268,7 @@ loop_until_started(_Partition, 0) ->
     0;
 loop_until_started(Partition, Num) ->
     Ret = clocksi_readitem_fsm:start_read_servers(Partition, Num),
+    timer:sleep(100),
     loop_until_started(Partition, Ret).
 
 handle_command({hello}, _Sender, State) ->
