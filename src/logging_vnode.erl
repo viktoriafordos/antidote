@@ -430,7 +430,14 @@ handle_coverage(_Req, _KeySpaces, _Sender, State) ->
 handle_exit(_Pid, _Reason, State) ->
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, _State = #state{log=Log}) ->
+    try
+	lager:info("closing log ~p", [Log]),
+	disk_log:close(Log)
+    catch
+	_:Err->
+	    lager:info("error closing log ~p", [Err])
+    end,
     ok.
 
 %%====================%%
@@ -440,7 +447,7 @@ terminate(_Reason, _State) ->
 
 
 open_log(LogFile, Partition)->
-    LogId = LogFile ++ "--" ++ integer_to_list(Partition),
+    LogId = LogFile ++ "--" ++ integer_to_list(Partition) ++ atom_to_list(node()),
     LogPath = filename:join(
                 app_helper:get_env(riak_core, platform_data_dir), LogId),
     case disk_log:open([{name, LogPath}]) of
