@@ -236,6 +236,12 @@ internal_read(AntidoteDB, Key, Type, MinSnapshotTime, TxId) ->
 	    end
     end.
 
+vectorclock_to_list(VC) ->
+    case is_list(VC) of
+        true -> VC;
+        false -> vectorclock:to_list(VC)
+    end.
+
 %% Should be called doesn't belong in SS
 %% returns true if op is more recent than SS (i.e. is not in the ss)
 %% returns false otw

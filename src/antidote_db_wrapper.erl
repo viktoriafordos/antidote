@@ -36,8 +36,8 @@
     snapshot_time()) -> {ok, snapshot(), snapshot_time()} | {error, not_found}.
 get_snapshot(AntidoteDB, Key, CommitTime) ->
     try
-        antidote_db:fold_keys(AntidoteDB,
-            fun(K, AccIn) ->
+        antidote_db:fold(AntidoteDB,
+            fun({K, V}, AccIn) ->
                 {Key1, VC, SNAP} = binary_to_term(K),
                 case (Key1 == Key) of %% check same key
                     true ->
@@ -45,7 +45,7 @@ get_snapshot(AntidoteDB, Key, CommitTime) ->
                         case (SNAP == snap) and
                             vectorclock:le(vectorclock:from_list(VC), CommitTime) of
                             true ->
-                                Snapshot = antidote_db:get(AntidoteDB, K),
+                                Snapshot = binary_to_term(V),
                                 throw({break, Snapshot, VC});
                             _ ->
                                 AccIn
@@ -248,6 +248,29 @@ get_operations_non_empty_test() ->
     ?assertEqual([7,6,5,4], O2),
 
     antidote_db:close_and_destroy(AntidoteDB, "get_operations_non_empty_test").
+
+operations_and_snapshots_mixed_test() ->
+    eleveldb:destroy("operations_and_snapshots_mixed_test", []),
+    {ok, AntidoteDB} = antidote_db:new("operations_and_snapshots_mixed_test"),
+
+    Key = key,
+    Key1 = key1,
+    Key2 = key2,
+    VCTo = [{local, 7}, {remote, 8}],
+    put_n_operations(AntidoteDB, Key, 10),
+    put_n_operations(AntidoteDB, Key1, 20),
+    put_snapshot(AntidoteDB, Key1, [{local, 2}, {remote, 3}], 5),
+    put_n_operations(AntidoteDB, Key2, 8),
+
+    %% We want all ops for Key1 that are between the snapshot and
+    %% [{local, 7}, {remote, 8}]. First get the snapshot, then OPS.
+    {ok, Value, VCFrom} = get_snapshot(AntidoteDB, Key1, vectorclock:from_list(VCTo)),
+    ?assertEqual({ok, 5, [{local, 2}, {remote, 3}]}, {ok, Value, VCFrom}),
+
+    O1 = get_ops(AntidoteDB, Key1, VCFrom, VCTo),
+    ?assertEqual([8, 7, 6, 5, 4, 3, 2], O1),
+
+    antidote_db:close_and_destroy(AntidoteDB, "operations_and_snapshots_mixed_test").
 
 put_n_snapshots(_AntidoteDB, _Key, 0) ->
     ok;
