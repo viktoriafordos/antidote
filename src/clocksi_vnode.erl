@@ -296,7 +296,7 @@ handle_command({check_servers_ready}, _Sender, SD0 = #state{partition = Partitio
 handle_command({prepare, Transaction, WriteSet}, Sender,
 	       State = #state{preflist = undefined, dcid = undefined}) ->
     handle_command({prepare, Transaction, WriteSet}, Sender,
-		   State#state{preflist = log_utilities:get_preflist_tuple(), dcid = replication_check:get_my_dc_id()});
+		   State#state{preflist = log_utilities:get_preflist_tuple(), dcid = dc_utilities:get_my_dc_id()});
 handle_command({prepare, Transaction, WriteSet}, _Sender,
     State = #state{partition = _Partition,
         committed_tx = CommittedTx,
@@ -324,7 +324,7 @@ handle_command({prepare, Transaction, WriteSet}, _Sender,
 handle_command({single_commit, Transaction, WriteSet}, Sender,
 	       State = #state{preflist = undefined, dcid = undefined}) ->
     handle_command({single_commit, Transaction, WriteSet}, Sender,
-		   State#state{preflist = log_utilities:get_preflist_tuple(), dcid = replication_check:get_my_dc_id()});
+		   State#state{preflist = log_utilities:get_preflist_tuple(), dcid = dc_utilities:get_my_dc_id()});
 handle_command({single_commit, Transaction, WriteSet}, _Sender,
     State = #state{partition = _Partition,
         committed_tx = CommittedTx,
@@ -365,7 +365,7 @@ handle_command({single_commit, Transaction, WriteSet}, _Sender,
 handle_command({commit, Transaction, TxCommitTime, Updates}, Sender,
 	       State = #state{preflist = undefined, dcid = undefined}) ->
     handle_command({commit, Transaction, TxCommitTime, Updates}, Sender,
-		   State#state{preflist = log_utilities:get_preflist_tuple(), dcid = replication_check:get_my_dc_id()});
+		   State#state{preflist = log_utilities:get_preflist_tuple(), dcid = dc_utilities:get_my_dc_id()});
 handle_command({commit, Transaction, TxCommitTime, Updates}, _Sender,
     #state{partition = _Partition,
         committed_tx = CommittedTx

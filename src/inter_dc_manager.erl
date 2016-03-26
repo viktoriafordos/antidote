@@ -105,7 +105,7 @@ start_bg_processes(Name) ->
 			  ok = rpc:call(Node, dc_utilities, check_registered_global, [stable_meta_data_server:generate_server_name(Node)]),
 			  ok = rpc:call(Node, meta_data_sender, start, [Name]) end, Nodes),
     %% Load the internal meta-data
-    replication_check:get_my_dc_id(),
+    replication_check:reset_my_dc_id(),
     replication_check:load_partition_meta_data(),
     %% Start the timers sending the heartbeats
     lager:info("Starting heartbeat sender timers"),

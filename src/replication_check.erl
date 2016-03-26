@@ -5,6 +5,7 @@
 -export([get_dc_partitions_detailed/1,
 	 get_dc_partitions_dict/1,
 	 get_my_dc_id/0,
+	 reset_my_dc_id/0,
 	 set_dc_partitions/2,
 	 get_dc_ids/1,
 	 get_key/1,
@@ -46,11 +47,15 @@ get_my_dc_id() ->
 	    DcId;
 	error ->
 	    %% Add my DC to the list of DCs since none have been added yet
+	    reset_my_dc_id()
+    end.
+
+-spec reset_my_dc_id() -> dcid().
+reset_my_dc_id() ->
 	    MyDC = dc_utilities:get_my_dc_id(),
 	    ok = stable_meta_data_server:broadcast_meta_data(my_dc, MyDC),
 	    ok = stable_meta_data_server:broadcast_meta_data_merge(dc_list_w_me, MyDC, fun ordsets:add_element/2, fun ordsets:new/0),
-	    MyDC
-    end.
+	    MyDC.
 
 %% Loads all the partitions ids into an ets table stored by
 %% their index
