@@ -31,7 +31,8 @@
 
 %% API
 -export([
-  send/2]).
+	 send/2,
+	 send_stable_time/2]).
 
 %% VNode methods
 -export([
@@ -67,17 +68,26 @@
 -spec send(partition_id(), #operation{}) -> ok.
 send(Partition, Operation) -> dc_utilities:call_vnode(Partition, inter_dc_log_sender_vnode_master, {log_event, Operation}).
 
+%% Send the stable time to this vnode, no transaction in the future will commit with a smaller time
+-spec send_stable_time(partition_id(), non_neg_integer()) -> ok.
+send_stable_time(Partition, Time) ->
+    dc_utilities:call_vnode(Partition, inter_dc_log_sender_vnode_master, {stable_time, Time}).
+
 %%%% VNode methods ----------------------------------------------------------+
 
 start_vnode(I) -> riak_core_vnode_master:get_vnode_pid(I, ?MODULE).
 
 init([Partition]) ->
-  {ok, set_timer(#state{
+  {ok, #state{
     partition = Partition,
     buffer = log_txn_assembler:new_state(),
     last_log_id = 0,
     timer = none
-  })}.
+  }}.
+
+%% Start the timer
+handle_command({start_timer}, _Sender, State) ->
+    {reply, ok, set_timer(true, State)};
 
 %% Handle the new operation
 handle_command({log_event, Operation}, _Sender, State) ->
@@ -94,13 +104,17 @@ handle_command({log_event, Operation}, _Sender, State) ->
   end,
   {noreply, State2};
 
+handle_command({stable_time, Time}, _Sender, State) ->
+    PingTxn = inter_dc_txn:ping(State#state.partition, State#state.last_log_id, Time),
+    {noreply, set_timer(broadcast(State, PingTxn))};
+
 handle_command({hello}, _Sender, State) ->
   {reply, ok, State};
 
 %% Handle the ping request, managed by the timer (1s by default)
 handle_command(ping, _Sender, State) ->
-    PingTxn = inter_dc_txn:ping(State#state.partition, State#state.last_log_id, get_stable_time(State#state.partition)),
-    {noreply, set_timer(broadcast(State, PingTxn))}.
+    get_stable_time(State#state.partition),
+    {noreply, set_timer(State)}.
 
 handle_coverage(_Req, _KeySpaces, _Sender, State) -> 
     {stop, not_implemented, State}.
@@ -137,17 +151,28 @@ del_timer(State = #state{timer = Timer}) ->
 
 %% Cancels the previous ping timer and sets a new one.
 -spec set_timer(#state{}) -> #state{}.
-set_timer(State = #state{partition = Partition}) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    Node = riak_core_ring:index_owner(Ring, Partition),
-    MyNode = node(),
-    case Node of
-	MyNode ->
+set_timer(State) ->
+    set_timer(false,State).
+
+-spec set_timer(boolean(), #state{}) -> #state{}.
+set_timer(First, State = #state{partition = Partition}) ->
+    case First of
+	true ->
+	    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+	    Node = riak_core_ring:index_owner(Ring, Partition),
+	    MyNode = node(),
+	    case Node of
+		MyNode ->
+		    State1 = del_timer(State),
+		    State1#state{timer = riak_core_vnode:send_command_after(?HEARTBEAT_PERIOD, ping)};
+		_Other ->
+		    State
+	    end;
+	false ->
 	    State1 = del_timer(State),
-	    State1#state{timer = riak_core_vnode:send_command_after(?HEARTBEAT_PERIOD, ping)};
-	_Other ->
-	    State
+	    State1#state{timer = riak_core_vnode:send_command_after(?HEARTBEAT_PERIOD, ping)}
     end.
+		
 
 %% Broadcasts the transaction via local publisher.
 -spec broadcast(#state{}, #interdc_txn{}) -> #state{}.
@@ -156,8 +181,7 @@ broadcast(State, Txn) ->
   Id = inter_dc_txn:last_log_opid(Txn),
   State#state{last_log_id = Id}.
 
-%% @doc Return smallest snapshot time of active transactions.
+%% @doc Sends an async request to get the smallest snapshot time of active transactions.
 %%      No new updates with smaller timestamp will occur in future.
 get_stable_time(Partition) ->
-    {ok, Time} = clocksi_vnode:get_min_prepared(Partition),
-    Time.
+    ok = logging_vnode:get_stable_time({Partition, node()}).

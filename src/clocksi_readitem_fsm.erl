@@ -43,6 +43,7 @@
 
 %% States
 -export([read_data_item/4,
+        async_read_data_item/5,
 	 check_partition_ready/3,
 	 start_read_servers/3,
 	 stop_read_servers/2]).
@@ -92,6 +93,11 @@ read_data_item({Partition,Node},Key,Type,Transaction) ->
             read_data_item({Partition,Node},Key,Type,Transaction)
     end.
 
+-spec async_read_data_item(index_node(), key(), type(), tx(), term()) -> ok.
+async_read_data_item({Partition,Node},Key,Type,Transaction, Coordinator) ->
+	gen_server:cast({global,generate_random_server_name(Node,Partition)},
+            {perform_read_cast, Coordinator, Key, Type, Transaction}).
+
 %% @doc This checks all partitions in the system to see if all read
 %%      servers have been started up.
 %%      Returns true if they have been, false otherwise.
@@ -135,9 +141,23 @@ check_partition_ready(Node,Partition,Num) ->
 
 start_read_servers_internal(_AntidoteDB, _Node,_Partition,0) ->
     0;
-start_read_servers_internal(AntidoteDB, Node, Partition, Num) ->
-    {ok,_Id} = clocksi_readitem_sup:start_fsm(AntidoteDB, Partition,Num),
-    start_read_servers_internal(AntidoteDB, Node, Partition, Num-1).
+start_read_servers_internal(AntidoteDB, Node, Partition, Num-1).
+    case clocksi_readitem_sup:start_fsm(AntidoteDB, Partition,Num) of
+	{ok,_Id} ->
+	    start_read_servers_internal(AntidoteDB, Node, Partition, Num-1);
+    {error,{already_started, _}} ->
+	    start_read_servers_internal(AntidoteDB, Node, Partition, Num-1);
+	Err ->
+	    lager:info("Unable to start clocksi read server for ~w, will retry", [Err]),
+	    try
+		gen_server:call({global,generate_server_name(Node,Partition,Num)},{go_down})
+	    catch
+		_:_Reason->
+		    ok
+	    end,
+	    start_read_servers_internal(Node, Partition, Num)
+    end.
+
 
 stop_read_servers_internal(_Node,_Partition,0) ->
     ok;
@@ -181,6 +201,7 @@ perform_read_internal(Coordinator,Key,Type,Transaction,AntidoteDB,PreparedCache,
     case check_clock(Key,Transaction,PreparedCache,Partition) of
 	{not_ready,Time} ->
 	    %% spin_wait(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,PreparedCache,Self);
+        lager:info("Not ready"),
 	    _Tref = erlang:send_after(Time, self(), {perform_read_cast,Coordinator,Key,Type,Transaction}),
 	    ok;
 	ready ->
@@ -225,15 +246,23 @@ check_prepared_list(Key,SnapshotTime,[{_TxId,Time}|Rest]) ->
 %%  - Reads and returns the log of specified Key using replication layer.
 return(Coordinator,Key,Type,Transaction,AntidoteDB,Partition) ->
     VecSnapshotTime = Transaction#transaction.vec_snapshot_time,
-    %%lager:info("Here is the vector snapshot time we'll be reading from: ~p", [VecSnapshotTime]),
     TxId = Transaction#transaction.txn_id,
     case materializer_vnode:read(AntidoteDB, Key, Type, VecSnapshotTime, TxId, Partition) of
         {ok, Snapshot} ->
-            Reply={ok, Snapshot};
+            case Coordinator of
+                {fsm, Sender} -> %% Return Type and Value directly here.
+                    gen_fsm:send_event(Sender, {ok, {Key, Type, Snapshot}});
+                _ ->
+                    _Ignore=gen_server:reply(Coordinator, {ok, Snapshot})
+            end;
         {error, Reason} ->
-            Reply={error, Reason}
+            case Coordinator of
+                {fsm, Sender} -> %% Return Type and Value directly here.
+                    gen_fsm:send_event(Sender, {error, Reason});
+                _ ->
+                    _Ignore=gen_server:reply(Coordinator, {error, Reason})
+            end
     end,
-    _Ignore=gen_server:reply(Coordinator, Reply),
     ok.
 
 

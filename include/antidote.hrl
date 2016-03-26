@@ -10,6 +10,7 @@
 -define(OP_TIMEOUT, infinity).
 -define(COORD_TIMEOUT, infinity).
 -define(COMM_TIMEOUT, infinity).
+-define(ZMQ_TIMEOUT, 5000).
 -define(NUM_W, 2).
 -define(NUM_R, 2).
 -define(CRDTS, [crdt_bcounter, crdt_orset, crdt_pncounter, crdt_rga]).
@@ -127,6 +128,7 @@
 -type dcid() :: term().
 -type tx() :: #transaction{}.
 -type cache_id() :: ets:tid().
+-type inter_dc_conn_err() :: {error, {partition_num_mismatch, non_neg_integer(), non_neg_integer()} | {error, connection_error}}.
 
 -export_type([key/0, op/0, crdt/0, val/0, reason/0, preflist/0,
               log/0, op_id/0, payload/0, operation/0, partition_id/0,
@@ -150,6 +152,7 @@
           transaction :: tx(),
           updated_partitions :: list(),
           num_to_ack :: non_neg_integer(),
+          num_to_read :: non_neg_integer(),
           prepare_time :: non_neg_integer(),
           commit_time :: non_neg_integer(),
           commit_protocol :: term(),

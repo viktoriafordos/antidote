@@ -24,11 +24,21 @@
 -include("antidote.hrl").
 -include_lib("riak_core/include/riak_core_vnode.hrl").
 
-
+%% Number of snapshots to trigger GC
 -define(SNAPSHOT_THRESHOLD, 10).
+%% Number of snapshots to keep after GC
 -define(SNAPSHOT_MIN, 3).
+%% Number of ops to keep before GC
 -define(OPS_THRESHOLD, 50).
+%% The first 3 elements in operations list are meta-data
+%% First is the key
+%% Second is a tuple {current op list size, max op list size}
+%% Thrid is a counter that assigns each op 1 larger than the previous
+%% Fourth is where the list of ops start
 -define(FIRST_OP, 4).
+%% If after the op GC there are only this many or less spaces
+%% free in the op list then increase the list size
+-define(RESIZE_THRESHOLD, 5).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -91,6 +101,25 @@ store_ss(AntidoteDB, Key, Snapshot, CommitTime) ->
 
 init([Partition]) ->
     {ok, #state{partition=Partition}}.
+
+-spec open_table(partition_id(), 'ops_cache' | 'snapshot_cache') -> atom() | ets:tid().
+open_table(Partition, Name) ->
+    case ets:info(get_cache_name(Partition, Name)) of
+	undefined ->
+	    ets:new(get_cache_name(Partition, Name),
+		    [set, protected, named_table, ?TABLE_CONCURRENCY]);
+	_ ->
+	    %% Other vnode hasn't finished closing tables
+	    lager:info("Unable to open ets table in materializer vnode, retrying"),
+	    timer:sleep(100),
+	    try
+		ets:delete(get_cache_name(Partition, Name))
+	    catch
+		_:_Reason->
+		    ok
+	    end,
+	    open_table(Partition, Name)
+    end.
 
 %% @doc The tables holding the updates and snapshots are shared with concurrent
 %%      readers, allowing them to be non-blocking and concurrent.
@@ -345,6 +374,33 @@ no_ops_lost_test() ->
 
     antidote_db:close_and_destroy(AntidoteDB, "no_ops_lost_test").
 
+
+%% @doc This tests to make sure operation lists can be large and resized
+large_list_test() ->
+        OpsCache = ets:new(ops_cache, [set]),
+    SnapshotCache = ets:new(snapshot_cache, [set]),
+    Key = mycount,
+    DC1 = 1,
+    Type = riak_dt_gcounter,
+
+    %% Make 1000 updates to grow the list, whithout generating a snapshot to perform the gc
+    {ok, Res0} = internal_read(Key, Type, vectorclock:from_list([{DC1,2}]),ignore, OpsCache, SnapshotCache),
+    ?assertEqual(0, Type:value(Res0)),
+
+    lists:foreach(fun(Val) ->
+			  op_insert_gc(Key, generate_payload(10,11+Val,Res0,Val), OpsCache, SnapshotCache)
+		  end, lists:seq(1,1000)),
+
+    {ok, Res1000} = internal_read(Key, Type, vectorclock:from_list([{DC1,2000}]),ignore, OpsCache, SnapshotCache),
+    ?assertEqual(1000, Type:value(Res1000)),
+
+    %% Now check everything is ok as the list shrinks from generating new snapshots
+    lists:foreach(fun(Val) ->
+    			  op_insert_gc(Key, generate_payload(10+Val,11+Val,Res0,Val), OpsCache, SnapshotCache),
+    			  {ok, Res} = internal_read(Key, Type, vectorclock:from_list([{DC1,2000}]),ignore, OpsCache, SnapshotCache),
+    			  ?assertEqual(Val, Type:value(Res))
+    		  end, lists:seq(1001,1100)).
+
 generate_payload(SnapshotTime,CommitTime,Prev,Name) ->
     Key = mycount,
     Type = riak_dt_gcounter,
@@ -358,6 +414,8 @@ generate_payload(SnapshotTime,CommitTime,Prev,Name) ->
 		     commit_time = {DC1,CommitTime},
 		     txid = 1
 		    }.
+
+
 
 seq_write_test() ->
     eleveldb:destroy("seq_write_test", []),
@@ -496,6 +554,5 @@ read_nonexisting_key_test() ->
     ?assertEqual(0, Type:value(ReadResult)),
 
     antidote_db:close_and_destroy(AntidoteDB, "concurrent_write_test").
-
 
 -endif.

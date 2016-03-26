@@ -25,6 +25,7 @@
 
 -export([start_vnode/1,
     read_data_item/5,
+    async_read_data_item/4,
     get_cache_name/2,
     get_min_prepared/1,
     get_active_txns_key/3,
@@ -35,6 +36,7 @@
     single_commit_sync/2,
     abort/2,
     now_microsec/1,
+    reverse_and_filter_updates_per_key/2,
     init/1,
     terminate/2,
     handle_command/3,
@@ -93,6 +95,9 @@ read_data_item(Node, TxId, Key, Type, Updates) ->
         {error, Reason} ->
             {error, Reason}
     end.
+
+async_read_data_item(Node, TxId, Key, Type) ->
+    clocksi_readitem_fsm:async_read_data_item(Node, Key, Type, TxId, {fsm, self()}).
 
 %% @doc Return active transactions in prepare state with their preparetime for a given key
 %% should be run from same physical node
@@ -218,6 +223,9 @@ init([Partition]) ->
         false ->
             DB = element(2, AntidoteDB),
             Num = clocksi_readitem_fsm:start_read_servers(DB, Partition, ?READ_CONCURRENCY),
+            loop_until_started(AntidoteDB, Partition, ?READ_CONCURRENCY),
+            Node = node(),
+            true = clocksi_readitem_fsm:check_partition_ready(Node, Partition, ?READ_CONCURRENCY),
             {ok, #state{partition = Partition,
                 prepared_tx = PreparedTx,
                 committed_tx = CommittedTx,
@@ -258,7 +266,14 @@ open_table(Partition) ->
 		    [set, protected, named_table, ?TABLE_CONCURRENCY]);
 	_ ->
 	    %% Other vnode hasn't finished closing tables
+	    lager:info("Unable to open ets table in clocksi vnode, retrying"),
 	    timer:sleep(100),
+	    try
+		ets:delete(get_cache_name(Partition, prepared))
+	    catch
+		_:_Reason->
+		    ok
+	    end,
 	    open_table(Partition)
     end.
 
@@ -268,6 +283,8 @@ loop_until_started(AntidoteDB, Partition, Num) ->
     Ret = clocksi_readitem_fsm:start_read_servers(AntidoteDB, artition, Num),
     loop_until_started(AntidoteDB, Partition, Ret).
 
+handle_command({hello}, _Sender, State) ->
+  {reply, ok, State};
 
 handle_command({check_tables_ready}, _Sender, SD0 = #state{partition = Partition}) ->
     Result = case ets:info(get_cache_name(Partition, prepared)) of
@@ -294,6 +311,7 @@ handle_command({prepare, Transaction, WriteSet}, _Sender,
         prepared_tx = PreparedTx,
         prepared_dict = PreparedDict
     }) ->
+    %lager:info("Trying to prepare ~w,WS ~w", [Transaction, WriteSet]),
     PrepareTime = now_microsec(dc_utilities:now()),
     {Result, NewPrepare, NewPreparedDict} = prepare(Transaction, WriteSet, CommittedTx, PreparedTx, PrepareTime, PreparedDict),
     case Result of
@@ -382,12 +400,6 @@ handle_command({abort, Transaction, Updates}, _Sender,
         _ ->
             {reply, {error, no_tx_record}, State}
     end;
-
-%% handle_command({start_read_servers}, _Sender,
-%%                #state{partition=Partition} = State) ->
-%%     clocksi_readitem_fsm:stop_read_servers(Partition,?READ_CONCURRENCY),
-%%     Num = clocksi_readitem_fsm:start_read_servers(Partition,?READ_CONCURRENCY),
-%%     {reply, ok, State#state{read_servers=Num}};
 
 handle_command({get_active_txns}, _Sender,
     #state{partition = Partition} = State) ->
@@ -580,8 +592,8 @@ now_microsec({MegaSecs, Secs, MicroSecs}) ->
 
 certification_check(TxId, Updates, CommittedTx, PreparedTx) ->
     case application:get_env(antidote, txn_cert) of
-        {ok, true} ->
-        io:format("AAAAH"),
+        {ok, true} -> 
+        %io:format("AAAAH"),
         certification_with_check(TxId, Updates, CommittedTx, PreparedTx);
         _  -> true
     end.

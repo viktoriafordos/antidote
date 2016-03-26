@@ -31,6 +31,7 @@
 %% API
 -export([start_vnode/1,
          asyn_read/2,
+	 get_stable_time/1,
          read/2,
          asyn_append/3,
          append/3,
@@ -94,6 +95,13 @@ asyn_read(Preflist, Log) ->
                                    {read, Log},
                                    {fsm, undefined, self()},
                                    ?LOGGING_MASTER).
+
+%% @doc Sends a `get_stable_time' synchronous command to `Node'
+-spec get_stable_time({partition(), node()}) -> ok.
+get_stable_time(Node) ->
+    riak_core_vnode_master:command(Node,
+				   {get_stable_time},
+				   ?LOGGING_MASTER).
 
 %% @doc Sends a `read' synchronous command to the Logs in `Node'
 -spec read({partition(), node()}, key()) -> {error, term()} | {ok, [term()]}.
@@ -163,16 +171,28 @@ init([Partition]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     GrossPreflists = riak_core_ring:all_preflists(Ring, ?N),
     Preflists = lists:filter(fun(X) -> preflist_member(Partition, X) end, GrossPreflists),
+    lager:info("Opening logs for partition ~w", [Partition]),
     case open_logs(LogFile, Preflists, dict:new()) of
         {error, Reason} ->
+	    lager:error("ERROR: opening logs for partition ~w, reason ~w", [Partition, Reason]),
             {error, Reason};
         Map ->
+	    lager:info("Done opening logs for partition ~w", [Partition]),
             {ok, #state{partition=Partition,
                         logs_map=Map,
                         clock=0,
                         senders_awaiting_ack=dict:new(),
                         last_read=start}}
     end.
+
+%% @doc Read command: Returns the phyiscal time of the 
+%%      clocksi vnode for which no transactions will commit with smaller time
+%%      Output: {ok, Time}
+handle_command({get_stable_time}, _Sender,
+               #state{partition=Partition}=State) ->
+    {ok, Time} = clocksi_vnode:get_min_prepared(Partition),
+    ok = inter_dc_log_sender_vnode:send_stable_time(Partition, Time),
+    {noreply, State};
 
 %% @doc Read command: Returns the operations logged for Key
 %%          Input: The id of the log to be read
