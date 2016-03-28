@@ -126,10 +126,11 @@ vectorclock_to_dict(VC) ->
         false -> VC
     end.
 
+%% Sort the resulting list, for easier comparison and parsing
 vectorclock_to_list(VC) ->
     case is_list(VC) of
-        true -> VC;
-        false -> vectorclock:to_list(VC)
+        true -> lists:sort(VC);
+        false -> lists:sort(vectorclock:to_list(VC))
     end.
 
 %% Workaround for basho bench
@@ -244,8 +245,8 @@ get_operations_non_empty_test() ->
     %% concurrent operations are present in the result
     O1 = get_ops(AntidoteDB, Key1, [{local, 2}, {remote, 2}], [{local, 8}, {remote, 9}]),
     O2 = get_ops(AntidoteDB, Key1, [{local, 4}, {remote, 5}], [{local, 7}, {remote, 7}]),
-    ?assertEqual([9,8,7,6,5,4,3,2], O1),
-    ?assertEqual([7,6,5,4], O2),
+    ?assertEqual([9, 8, 7, 6, 5, 4, 3, 2], O1),
+    ?assertEqual([7, 6, 5, 4], O2),
 
     antidote_db:close_and_destroy(AntidoteDB, "get_operations_non_empty_test").
 
@@ -271,6 +272,37 @@ operations_and_snapshots_mixed_test() ->
     ?assertEqual([8, 7, 6, 5, 4, 3, 2], O1),
 
     antidote_db:close_and_destroy(AntidoteDB, "operations_and_snapshots_mixed_test").
+
+%% This test is used to check that compare function for VCs is working OK
+%% with VCs containing != lengths and values
+length_of_vc_test() ->
+    eleveldb:destroy("length_of_vc_test", []),
+    {ok, AntidoteDB} = antidote_db:new("length_of_vc_test"),
+
+    %% Same key, and same value for the local DC
+    %% OP2 should be newer than op1 since it contains 1 more DC in its VC
+    Key = key,
+    put_op(AntidoteDB, Key, [{local, 2}], 1),
+    put_op(AntidoteDB, Key, [{local, 2}, {remote, 3}], 2),
+    O1 = get_ops(AntidoteDB, Key, [{local, 1}, {remote, 1}], [{local, 7}, {remote, 8}]),
+    ?assertEqual([2, 1], O1),
+
+    %% Insert OP3, with no remote DC value and check it´s newer than 1 and 2
+    put_op(AntidoteDB, Key, [{local, 3}], 3),
+    O2 = get_ops(AntidoteDB, Key, [{local, 1}, {remote, 1}], [{local, 7}, {remote, 8}]),
+    ?assertEqual([3, 2, 1], O2),
+
+    %% OP3 is still returned if the local value we look for is lower
+    %% This is the expected outcome for vectorclock gt and lt methods
+    O3 = get_ops(AntidoteDB, Key, [{local, 1}, {remote, 1}], [{local, 2}, {remote, 8}]),
+    ?assertEqual([3, 2, 1], O3),
+
+    %% Insert remote operation not containing local clock and check is the oldest one
+    put_op(AntidoteDB, Key, [{remote, 1}], 4),
+    O4 = get_ops(AntidoteDB, Key, [{local, 1}, {remote, 1}], [{local, 7}, {remote, 8}]),
+    ?assertEqual([3, 2, 1, 4], O4),
+
+    antidote_db:close_and_destroy(AntidoteDB, "length_of_vc_test").
 
 put_n_snapshots(_AntidoteDB, _Key, 0) ->
     ok;

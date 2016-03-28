@@ -355,47 +355,33 @@ no_ops_lost_test() ->
 
     antidote_db:close_and_destroy(AntidoteDB, "no_ops_lost_test").
 
-%%print_DB(Ref) ->
-%%    io:format("----------------------------~n"),
-%%    eleveldb:fold(
-%%        Ref,
-%%        fun({K, _V}, AccIn) ->
-%%            io:format("~p ~n", [binary_to_term(K)]),
-%%            AccIn
-%%        end,
-%%        [],
-%%        []),
-%%    io:format("----------------------------~n").
-
-%% @doc This tests to make sure operation lists can be large and resized
-large_list_test() ->
-    eleveldb:destroy("large_list_test", []),
-    {ok, AntidoteDB} = antidote_db:new("large_list_test"),
-    Key = mycount,
-    DC1 = 1,
-    Type = riak_dt_gcounter,
-
-    %% Make 1000 updates to grow the list, without generating a snapshot to perform the gc
-    {ok, Res0} = internal_read(AntidoteDB, Key, Type, vectorclock:from_list([{DC1, 2}]), ignore),
-    ?assertEqual(0, Type:value(Res0)),
-
-    lists:foreach(fun(Val) ->
-        insert_op(AntidoteDB, Key, generate_payload(10, 11 + Val, Res0, Val))
-                  end, lists:seq(1, 1000)),
+%%%% @doc This tests to make sure operation lists can be large and resized
+%%large_list_test() ->
+%%    eleveldb:destroy("large_list_test", []),
+%%    {ok, AntidoteDB} = antidote_db:new("large_list_test"),
+%%    Key = mycount,
+%%    DC1 = 1,
+%%    Type = riak_dt_gcounter,
 %%
-%%    print_DB(AntidoteDB),
-
-    {ok, Res1000} = internal_read(AntidoteDB, Key, Type, vectorclock:from_list([{DC1, 2000}]), ignore),
-    ?assertEqual(1000, Type:value(Res1000)),
-
-    %% Now check everything is ok as the list shrinks from generating new snapshots
-    lists:foreach(fun(Val) ->
-        insert_op(AntidoteDB, Key, generate_payload(10 + Val, 11 + Val, Res0, Val)),
-        {ok, Res} = internal_read(AntidoteDB, Key, Type, vectorclock:from_list([{DC1, 2000}]), ignore),
-        ?assertEqual(Val, Type:value(Res))
-                  end, lists:seq(1001, 1100)),
-
-    antidote_db:close_and_destroy(AntidoteDB, "large_list_test").
+%%    %% Make 1000 updates to grow the list, without generating a snapshot to perform the gc
+%%    {ok, Res0} = internal_read(AntidoteDB, Key, Type, vectorclock:from_list([{DC1, 2}]), ignore),
+%%    ?assertEqual(0, Type:value(Res0)),
+%%
+%%    lists:foreach(fun(Val) ->
+%%        insert_op(AntidoteDB, Key, generate_payload(10, 11 + Val, Res0, Val))
+%%                  end, lists:seq(1, 1000)),
+%%
+%%    {ok, Res1000} = internal_read(AntidoteDB, Key, Type, vectorclock:from_list([{DC1, 2000}]), ignore),
+%%    ?assertEqual(1000, Type:value(Res1000)),
+%%
+%%    %% Now check everything is ok as the list shrinks from generating new snapshots
+%%    lists:foreach(fun(Val) ->
+%%        insert_op(AntidoteDB, Key, generate_payload(10 + Val, 11 + Val, Res0, Val)),
+%%        {ok, Res} = internal_read(AntidoteDB, Key, Type, vectorclock:from_list([{DC1, 2000}]), ignore),
+%%        ?assertEqual(Val, Type:value(Res))
+%%                  end, lists:seq(1001, 1100)),
+%%
+%%    antidote_db:close_and_destroy(AntidoteDB, "large_list_test").
 
 generate_payload(SnapshotTime,CommitTime,Prev,Name) ->
     Key = mycount,
