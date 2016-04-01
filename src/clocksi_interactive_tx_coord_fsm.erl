@@ -366,21 +366,21 @@ prepare(SD0 = #tx_coord_state{
                             reply_to_client(SD0#tx_coord_state{state = committed_read_only});
                         false ->
                             gen_fsm:reply(From, {ok, Snapshot_time}),
-                            {next_state, committing, SD0#tx_coord_state{state = committing, commit_time = Snapshot_time}}
+                            {next_state, committing, SD0#tx_coord_state{state = committing, commit_time = Snapshot_time}, ?STATE_TIMEOUT}
                     end;
                 _ ->
                     {next_state, receive_prepared,
-                        SD0#tx_coord_state{state = prepared}}
+                        SD0#tx_coord_state{state = prepared}, ?STATE_TIMEOUT}
             end;
         [_] ->
             ok = ?CLOCKSI_VNODE:single_commit(Updated_partitions, Transaction),
             {next_state, single_committing,
-                SD0#tx_coord_state{state = committing, num_to_ack = 1}};
+                SD0#tx_coord_state{state = committing, num_to_ack = 1}, ?STATE_TIMEOUT};
         [_|_] ->
             ok = ?CLOCKSI_VNODE:prepare(Updated_partitions, Transaction),
             Num_to_ack = length(Updated_partitions),
             {next_state, receive_prepared,
-                SD0#tx_coord_state{num_to_ack = Num_to_ack, state = prepared}}
+                SD0#tx_coord_state{num_to_ack = Num_to_ack, state = prepared}, ?STATE_TIMEOUT}
     end.
 
 %% @doc state called when 2pc is forced independently of the number of partitions

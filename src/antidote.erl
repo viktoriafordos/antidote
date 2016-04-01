@@ -196,9 +196,13 @@ read_objects(Clock, _Properties, Objects, StayAlive) ->
             [{read, {Key, Type}}] = Args,
             case materializer:check_operations([{read, {Key, Type}}]) of
                 ok ->
-                    {ok, Val, CommitTime} = clocksi_interactive_tx_coord_fsm:
-                        perform_singleitem_read(Key,Type),
-                    {ok, [Val], CommitTime};
+                    case clocksi_interactive_tx_coord_fsm:
+                        perform_singleitem_read(Key,Type) of
+			{ok, Val, CommitTime} ->
+                    	    {ok, [Val], CommitTime};
+			{error, Reason} ->
+			    {error, Reason}
+		    end;
                 {error, Reason} ->
                     {error, Reason}
             end;

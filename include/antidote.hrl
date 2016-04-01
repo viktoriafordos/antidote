@@ -11,6 +11,7 @@
 -define(COORD_TIMEOUT, infinity).
 -define(COMM_TIMEOUT, infinity).
 -define(ZMQ_TIMEOUT, 5000).
+-define(STATE_TIMEOUT, 2000).
 -define(NUM_W, 2).
 -define(NUM_R, 2).
 -define(CRDTS, [crdt_bcounter, crdt_orset, crdt_pncounter, crdt_rga]).
