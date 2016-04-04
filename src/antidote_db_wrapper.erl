@@ -68,7 +68,7 @@ get_snapshot(AntidoteDB, Key, CommitTime) ->
 -spec put_snapshot(antidote_db:antidote_db(), key(), snapshot_time(),
     snapshot()) -> ok | error.
 put_snapshot(AntidoteDB, Key, SnapshotTime, Snapshot) ->
-    SnapshotTimeList = vectorclock_to_list(SnapshotTime),
+    SnapshotTimeList = vectorclock_to_sorted_list(SnapshotTime),
     antidote_db:put(AntidoteDB, {binary_to_atom(Key), SnapshotTimeList, snap}, Snapshot).
 
 %% Returns a list of operations that have commit time in the range [VCFrom, VCTo]
@@ -117,7 +117,7 @@ get_ops(AntidoteDB, Key, VCFrom, VCTo) ->
 %% Saves the operation into AntidoteDB
 -spec put_op(antidote_db:antidote_db(), key(), vectorclock(), operation()) -> ok | error.
 put_op(AntidoteDB, Key, VC, Op) ->
-    VCList = vectorclock_to_list(VC),
+    VCList = vectorclock_to_sorted_list(VC),
     antidote_db:put(AntidoteDB, {binary_to_atom(Key), VCList, op}, Op).
 
 vectorclock_to_dict(VC) ->
@@ -127,7 +127,7 @@ vectorclock_to_dict(VC) ->
     end.
 
 %% Sort the resulting list, for easier comparison and parsing
-vectorclock_to_list(VC) ->
+vectorclock_to_sorted_list(VC) ->
     case is_list(VC) of
         true -> lists:sort(VC);
         false -> lists:sort(vectorclock:to_list(VC))
@@ -142,6 +142,12 @@ binary_to_atom(Key) ->
     end.
 
 -ifdef(TEST).
+
+%% This test ensures vectorclock_to_list method
+%% sorts VCs the correct way
+vectorclock_to_sorted_list_test() ->
+    Sorted = vectorclock_to_sorted_list([{e, 5}, {c, 3}, {a, 1}, {b, 2}, {d, 4}]),
+    ?assertEqual([{a, 1}, {b, 2}, {c, 3}, {d, 4}, {e, 5}], Sorted).
 
 get_snapshot_not_found_test() ->
     eleveldb:destroy("get_snapshot_not_found_test", []),
