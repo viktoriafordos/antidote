@@ -283,7 +283,6 @@ perform_read(Args, Updated_partitions, Transaction, Sender) ->
 
 
 perform_update(Args, Updated_partitions, Transaction, Sender) ->
-    lager:info("PERFORM UPDATAEEEEEEEEE"),
     {Key, Type, Param} = Args,
     Preflist = ?LOG_UTIL:get_preflist_from_key(Key),
     IndexNode = hd(Preflist),

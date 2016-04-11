@@ -114,7 +114,6 @@ read(Node, Log) ->
 %% @doc Sends an `append' asyncrhonous command to the Logs in `Preflist'
 -spec asyn_append(preflist(), key(), term()) -> ok.
 asyn_append(Preflist, Log, Payload) ->
-    lager:info("perfomring append ~w",[Payload]),
     riak_core_vnode_master:command(Preflist,
                                    {append, Log, Payload},
                                    {fsm, undefined, self(), ?SYNC_LOG},
@@ -123,7 +122,6 @@ asyn_append(Preflist, Log, Payload) ->
 %% @doc synchronous append operation
 -spec append(index_node(), key(), term()) -> {ok, op_id()} | {error, term()}.
 append(IndexNode, LogId, Payload) ->
-    lager:info("perfomring append2 ~w",[Payload]),
     riak_core_vnode_master:sync_command(IndexNode,
                                         {append, LogId, Payload, false},
                                         ?LOGGING_MASTER,
@@ -133,7 +131,6 @@ append(IndexNode, LogId, Payload) ->
 %% If enabled in antidote.hrl will ensure item is written to disk
 -spec append_commit(index_node(), key(), term()) -> {ok, op_id()} | {error, term()}.
 append_commit(IndexNode, LogId, Payload) ->
-    lager:info("perfomring append3 ~w",[Payload]),
     riak_core_vnode_master:sync_command(IndexNode,
                                         {append, LogId, Payload, ?SYNC_LOG},
                                         ?LOGGING_MASTER,
@@ -143,7 +140,6 @@ append_commit(IndexNode, LogId, Payload) ->
 %% The IsLocal flag indicates if the operations in the transaction were handled by the local or remote DC.
 -spec append_group(index_node(), key(), [term()], boolean()) -> {ok, op_id()} | {error, term()}.
 append_group(IndexNode, LogId, PayloadList, IsLocal) ->
-    lager:info("perfomring append4 ~w",[PayloadList]),
     riak_core_vnode_master:sync_command(IndexNode,
                                         {append_group, LogId, PayloadList, IsLocal},
                                         ?LOGGING_MASTER,
@@ -152,7 +148,6 @@ append_group(IndexNode, LogId, PayloadList, IsLocal) ->
 %% @doc asynchronous append list of operations
 -spec asyn_append_group(index_node(), key(), [term()], boolean()) -> ok.
 asyn_append_group(IndexNode, LogId, PayloadList, IsLocal) ->
-    lager:info("perfomring append5 ~w",[PayloadList]),
     riak_core_vnode_master:command(IndexNode,
 				   {append_group, LogId, PayloadList, IsLocal},
 				   ?LOGGING_MASTER,
@@ -510,10 +505,8 @@ insert_operation(Log, LogId, Operation) ->
     Result = disk_log:log(Log, {LogId, Operation}),
     case Result of
         ok ->
-	    lager:info("Stored op to log ~w", [Operation]),
             {ok, Operation#operation.op_number};
         {error, Reason} ->
-	    lager:info("Error storing to log ~w", [Reason]),
             {error, Reason}
     end.
 

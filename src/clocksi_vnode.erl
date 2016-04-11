@@ -309,7 +309,6 @@ handle_command({prepare, Transaction, WriteSet}, _Sender,
 	preflist = Preflist,
 	prepared_dict = PreparedDict
     }) ->
-    %lager:info("Trying to prepare ~w,WS ~w", [Transaction, WriteSet]),
     PrepareTime = now_microsec(dc_utilities:now()),
     {Result, NewPrepare, NewPreparedDict} = prepare(Transaction, WriteSet, CommittedTx, PreparedTx, PrepareTime, PreparedDict, Preflist),
     case Result of
@@ -508,7 +507,6 @@ reset_prepared(PreparedTx, [{Key, _Type, {_Op, _Actor}} | Rest], TxId, Time, Act
     reset_prepared(PreparedTx, Rest, TxId, Time, ActiveTxs).
 
 commit(Transaction, TxCommitTime, Updates, _CommittedTx, State = #state{preflist = Preflist, dcid = DcId}) ->
-    lager:info("COMMITTTTT ~w~n~n", [Updates]),
     TxId = Transaction#transaction.txn_id,
     LogRecord = #log_record{tx_id = TxId,
         op_type = commit,

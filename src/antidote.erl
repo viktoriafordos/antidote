@@ -272,7 +272,6 @@ read(Key, Type) ->
 -spec clocksi_execute_tx(Clock :: snapshot_time(),
                          [client_op()],snapshot_time(),boolean()) -> {ok, {txid(), [snapshot()], snapshot_time()}} | {error, term()}.
 clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive) ->
-    lager:info("I am ~w", [self()]),
     case materializer:check_operations(Operations) of
         {error, Reason} ->
             {error, Reason};
