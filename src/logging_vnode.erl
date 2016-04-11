@@ -413,6 +413,9 @@ handle_commit(TxId, OpPayload, T, Key, MinSnapshotTime, Ops, CommittedOpsDict) -
 	    filter_terms_for_key(T, Key, MinSnapshotTime, Ops, CommittedOpsDict)
     end.
 
+handle_handoff_command({get_all, _logId}, _Sender, State) ->
+    {reply, {error, not_ready}, State};
+
 handle_handoff_command(_Msg, _Sender,
                        State) ->
     {noreply, State}.
