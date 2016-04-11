@@ -27,7 +27,7 @@
     read_data_item/5,
     async_read_data_item/4,
     get_cache_name/2,
-    get_min_prepared/1,
+    send_min_prepared/1,
     get_active_txns_key/3,
     get_active_txns/2,
     prepare/2,
@@ -152,11 +152,8 @@ get_active_txns_internal(TableName) ->
                 end,
     {ok, ActiveTxs}.
 
-get_min_prepared(Partition) ->
-    riak_core_vnode_master:sync_command({Partition, node()},
-					get_min_prepared,
-					clocksi_vnode_master,
-					infinity).
+send_min_prepared(Partition) ->
+    dc_utilities:call_local_vnode(Partition, clocksi_vnode_master, {send_min_prepared}).
 
 %% @doc Sends a prepare request to a Node involved in a tx identified by TxId
 prepare(ListofNodes, TxId) ->
@@ -235,10 +232,16 @@ check_tables_ready() ->
 check_table_ready([]) ->
     true;
 check_table_ready([{Partition, Node} | Rest]) ->
-    Result = riak_core_vnode_master:sync_command({Partition, Node},
-        {check_tables_ready},
-        ?CLOCKSI_MASTER,
-        infinity),
+    Result =
+	try
+	    riak_core_vnode_master:sync_command({Partition, Node},
+						{check_tables_ready},
+						?CLOCKSI_MASTER,
+						infinity)
+	catch
+	    _:_Reason ->
+		false
+	end,
     case Result of
         true ->
             check_table_ready(Rest);
@@ -283,9 +286,11 @@ handle_command({check_tables_ready}, _Sender, SD0 = #state{partition = Partition
              end,
     {reply, Result, SD0};
 
-handle_command(get_min_prepared, _Sender,
-	       State = #state{prepared_dict = PreparedDict}) ->
-    {reply, get_min_prep(PreparedDict), State};
+handle_command({send_min_prepared}, _Sender,
+	       State = #state{partition = Partition, prepared_dict = PreparedDict}) ->
+    {ok, Time} = get_min_prep(PreparedDict),
+    dc_utilities:call_local_vnode(Partition, logging_vnode_master, {send_min_prepared, Time}),
+    {noreply, State};
 
 handle_command({check_servers_ready}, _Sender, SD0 = #state{partition = Partition, read_servers = Serv}) ->
     loop_until_started(Partition, Serv),
@@ -503,6 +508,7 @@ reset_prepared(PreparedTx, [{Key, _Type, {_Op, _Actor}} | Rest], TxId, Time, Act
     reset_prepared(PreparedTx, Rest, TxId, Time, ActiveTxs).
 
 commit(Transaction, TxCommitTime, Updates, _CommittedTx, State = #state{preflist = Preflist, dcid = DcId}) ->
+    lager:info("COMMITTTTT ~w~n~n", [Updates]),
     TxId = Transaction#transaction.txn_id,
     LogRecord = #log_record{tx_id = TxId,
         op_type = commit,

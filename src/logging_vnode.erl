@@ -114,6 +114,7 @@ read(Node, Log) ->
 %% @doc Sends an `append' asyncrhonous command to the Logs in `Preflist'
 -spec asyn_append(preflist(), key(), term()) -> ok.
 asyn_append(Preflist, Log, Payload) ->
+    lager:info("perfomring append ~w",[Payload]),
     riak_core_vnode_master:command(Preflist,
                                    {append, Log, Payload},
                                    {fsm, undefined, self(), ?SYNC_LOG},
@@ -122,6 +123,7 @@ asyn_append(Preflist, Log, Payload) ->
 %% @doc synchronous append operation
 -spec append(index_node(), key(), term()) -> {ok, op_id()} | {error, term()}.
 append(IndexNode, LogId, Payload) ->
+    lager:info("perfomring append2 ~w",[Payload]),
     riak_core_vnode_master:sync_command(IndexNode,
                                         {append, LogId, Payload, false},
                                         ?LOGGING_MASTER,
@@ -131,16 +133,17 @@ append(IndexNode, LogId, Payload) ->
 %% If enabled in antidote.hrl will ensure item is written to disk
 -spec append_commit(index_node(), key(), term()) -> {ok, op_id()} | {error, term()}.
 append_commit(IndexNode, LogId, Payload) ->
+    lager:info("perfomring append3 ~w",[Payload]),
     riak_core_vnode_master:sync_command(IndexNode,
                                         {append, LogId, Payload, ?SYNC_LOG},
                                         ?LOGGING_MASTER,
                                         infinity).
 
-
 %% @doc synchronous append list of operations
 %% The IsLocal flag indicates if the operations in the transaction were handled by the local or remote DC.
 -spec append_group(index_node(), key(), [term()], boolean()) -> {ok, op_id()} | {error, term()}.
 append_group(IndexNode, LogId, PayloadList, IsLocal) ->
+    lager:info("perfomring append4 ~w",[PayloadList]),
     riak_core_vnode_master:sync_command(IndexNode,
                                         {append_group, LogId, PayloadList, IsLocal},
                                         ?LOGGING_MASTER,
@@ -149,6 +152,7 @@ append_group(IndexNode, LogId, PayloadList, IsLocal) ->
 %% @doc asynchronous append list of operations
 -spec asyn_append_group(index_node(), key(), [term()], boolean()) -> ok.
 asyn_append_group(IndexNode, LogId, PayloadList, IsLocal) ->
+    lager:info("perfomring append5 ~w",[PayloadList]),
     riak_core_vnode_master:command(IndexNode,
 				   {append_group, LogId, PayloadList, IsLocal},
 				   ?LOGGING_MASTER,
@@ -183,12 +187,14 @@ init([Partition]) ->
                         last_read=start}}
     end.
 
+handle_command({hello}, _Sender, State) ->
+  {reply, ok, State};
+
 %% @doc Read command: Returns the phyiscal time of the 
 %%      clocksi vnode for which no transactions will commit with smaller time
 %%      Output: {ok, Time}
-handle_command({get_stable_time}, _Sender,
+handle_command({send_min_prepared, Time}, _Sender,
                #state{partition=Partition}=State) ->
-    {ok, Time} = clocksi_vnode:get_min_prepared(Partition),
     ok = inter_dc_log_sender_vnode:send_stable_time(Partition, Time),
     {noreply, State};
 
@@ -295,91 +301,116 @@ handle_command({append_group, LogId, PayloadList, IsLocal}, _Sender,
     end;
 
 handle_command({get, _LogId, MinSnapshotTime, Type, Key}, _Sender,
-    #state{log = Log, clock = _Clock, partition = _Partition} = State) ->
-    case get_ops_from_log(Log, Key, start, MinSnapshotTime, dict:new(), []) of
+	       #state{logs_map = _Map, clock = _Clock, partition = _Partition, log = Log} = State) ->
+    case get_ops_from_log(Log, {key, Key}, start, MinSnapshotTime, dict:new(), dict:new()) of
 	{error, Reason} ->
 	    {reply, {error, Reason}, State};
-	CommitedOpsForKey ->
-	    {reply, {length(CommitedOpsForKey), CommitedOpsForKey, {0,clocksi_materializer:new(Type)},
+	CommittedOpsForKeyDict ->
+	    CommittedOpsForKey =
+		case dict:find(Key, CommittedOpsForKeyDict) of
+		    {ok, Val} ->
+			Val;
+		    error ->
+			[]
+		end,
+	    {reply, {length(CommittedOpsForKey), CommittedOpsForKey, {0,clocksi_materializer:new(Type)},
 		     vectorclock:new(), false}, State}
+    end;
+
+%% This will reply with all downstream operations that have
+%% been stored in the log given by LogId
+%% The resut is a dict, with a list of ops per key
+handle_command({get_all, _LogId}, _Sender,
+	       #state{logs_map = _Map, clock = _Clock, partition = _Partition, log = Log} = State) ->
+    case get_ops_from_log(Log, undefined, start, undefined, dict:new(), dict:new()) of
+	{error, Reason} ->
+	    {reply, {error, Reason}, State};
+	CommittedOpsForKeyDict ->
+	    {reply, CommittedOpsForKeyDict, State}
     end;
 
 handle_command(_Message, _Sender, State) ->
     {noreply, State}.
-
 
 reverse_and_add_op_id([],_Id,Acc) ->
     Acc;
 reverse_and_add_op_id([Next|Rest],Id,Acc) ->
     reverse_and_add_op_id(Rest,Id+1,[{Id,Next}|Acc]).
 
-
 %% @doc This method successively calls disk_log:chunk so all the log is read.
 %% With each valid chunk, filter_terms_for_key is called.
-get_ops_from_log(Log, Key, Continuation, MinSnapshotTime, Ops, CommitedOps) ->
+get_ops_from_log(Log, Key, Continuation, MinSnapshotTime, Ops, CommittedOpsDict) ->
     case disk_log:chunk(Log, Continuation) of
         eof ->
-            reverse_and_add_op_id(CommitedOps,0,[]);
+	    dict:fold(fun(Key1, CommittedOps, Acc) ->
+			      dict:store(Key1, reverse_and_add_op_id(CommittedOps,0,[]), Acc)
+		      end, dict:new(), CommittedOpsDict);
         {error, Reason} ->
             {error, Reason};
         {NewContinuation, NewTerms} ->
-            {NewOps, NewCommitedOps} = filter_terms_for_key(NewTerms, Key, MinSnapshotTime, Ops, CommitedOps),
-            get_ops_from_log(Log, Key, NewContinuation, MinSnapshotTime, NewOps, NewCommitedOps);
+            {NewOps, NewCommittedOps} = filter_terms_for_key(NewTerms, Key, MinSnapshotTime, Ops, CommittedOpsDict),
+            get_ops_from_log(Log, Key, NewContinuation, MinSnapshotTime, NewOps, NewCommittedOps);
         {NewContinuation, NewTerms, BadBytes} ->
             case BadBytes > 0 of
                 true -> {error, bad_bytes};
-                false -> {NewOps, NewCommitedOps} = filter_terms_for_key(NewTerms, Key, MinSnapshotTime, Ops, CommitedOps),
-                    get_ops_from_log(Log, Key, NewContinuation, MinSnapshotTime, NewOps, NewCommitedOps)
+                false -> {NewOps, NewCommittedOps} = filter_terms_for_key(NewTerms, Key, MinSnapshotTime, Ops, CommittedOpsDict),
+                    get_ops_from_log(Log, Key, NewContinuation, MinSnapshotTime, NewOps, NewCommittedOps)
             end
     end.
 
 %% @doc Given a list of log_records, this method filters the ones corresponding to Key.
+%% If key is undefined then is returns all records for all keys
 %% It returns a dict corresponding to all the ops matching Key and
 %% a list of the commited operations for that key which have a smaller commit time than MinSnapshotTime.
-filter_terms_for_key([], _Key, _MinSnapshotTime, Ops, CommitedOps) ->
-    {Ops, CommitedOps};
-filter_terms_for_key([H|T], Key, MinSnapshotTime, Ops, CommitedOps) ->
+filter_terms_for_key([], _Key, _MinSnapshotTime, Ops, CommittedOpsDict) ->
+    {Ops, CommittedOpsDict};
+filter_terms_for_key([H|T], Key, MinSnapshotTime, Ops, CommittedOpsDict) ->
     {_, {operation, _, #log_record{tx_id = TxId, op_type = OpType, op_payload = OpPayload}}} = H,
     case OpType of
         update ->
-            handle_update(TxId, OpPayload,  T, Key, MinSnapshotTime, Ops, CommitedOps);
+            handle_update(TxId, OpPayload, T, Key, MinSnapshotTime, Ops, CommittedOpsDict);
         commit ->
-            handle_commit(TxId, OpPayload, T, Key, MinSnapshotTime, Ops, CommitedOps);
+            handle_commit(TxId, OpPayload, T, Key, MinSnapshotTime, Ops, CommittedOpsDict);
         _ ->
-            filter_terms_for_key(T, Key, MinSnapshotTime, Ops, CommitedOps)
+            filter_terms_for_key(T, Key, MinSnapshotTime, Ops, CommittedOpsDict)
     end.
 
-handle_update(TxId, OpPayload,  T, Key, MinSnapshotTime, Ops, CommitedOps) ->
+handle_update(TxId, OpPayload,  T, Key, MinSnapshotTime, Ops, CommittedOpsDict) ->
     {Key1, _, _} = OpPayload,
-    case Key == Key1 of
+    case (Key == {key, Key1}) or (Key == undefined) of
         true ->
             filter_terms_for_key(T, Key, MinSnapshotTime,
-                dict:append(TxId, OpPayload, Ops), CommitedOps);
+                dict:append(TxId, OpPayload, Ops), CommittedOpsDict);
         false ->
-            filter_terms_for_key(T, Key, MinSnapshotTime, Ops, CommitedOps)
+            filter_terms_for_key(T, Key, MinSnapshotTime, Ops, CommittedOpsDict)
     end.
 
-handle_commit(TxId, OpPayload, T, Key, MinSnapshotTime, Ops, CommitedOps) ->
+handle_commit(TxId, OpPayload, T, Key, MinSnapshotTime, Ops, CommittedOpsDict) ->
     {{DcId, TxCommitTime}, SnapshotTime} = OpPayload,
     case dict:find(TxId, Ops) of
-        {ok, [{Key, Type, Op}]} ->
-            case not vectorclock:gt(SnapshotTime, MinSnapshotTime) of
-                true ->
-                    CommittedDownstreamOp =
-                        #clocksi_payload{
-                            key = Key,
-                            type = Type,
-                            op_param = Op,
-                            snapshot_time = SnapshotTime,
-                            commit_time = {DcId, TxCommitTime},
-                            txid = TxId},
-                    filter_terms_for_key(T, Key, MinSnapshotTime, Ops,
-                        lists:append(CommitedOps, [CommittedDownstreamOp]));
-                false ->
-                    filter_terms_for_key(T, Key, MinSnapshotTime, Ops, CommitedOps)
-            end;
-        _ ->
-            filter_terms_for_key(T, Key, MinSnapshotTime, Ops, CommitedOps)
+        {ok, OpsList} ->
+	    NewCommittedOpsDict = 
+		lists:foldl(fun({KeyInternal, Type, Op}, Acc) ->
+				    case ((MinSnapshotTime == undefined) orelse
+									   (not vectorclock:gt(SnapshotTime, MinSnapshotTime))) of
+					true ->
+					    CommittedDownstreamOp =
+						#clocksi_payload{
+						   key = KeyInternal,
+						   type = Type,
+						   op_param = Op,
+						   snapshot_time = SnapshotTime,
+						   commit_time = {DcId, TxCommitTime},
+						   txid = TxId},
+					    dict:append(KeyInternal, CommittedDownstreamOp, Acc);
+					false ->
+					    Acc
+				    end
+			    end, CommittedOpsDict, OpsList),
+	    filter_terms_for_key(T, Key, MinSnapshotTime, Ops,
+				 NewCommittedOpsDict);
+	false ->
+	    filter_terms_for_key(T, Key, MinSnapshotTime, Ops, CommittedOpsDict)
     end.
 
 handle_handoff_command(_Msg, _Sender,
@@ -476,8 +507,10 @@ insert_operation(Log, LogId, Operation) ->
     Result = disk_log:log(Log, {LogId, Operation}),
     case Result of
         ok ->
+	    lager:info("Stored op to log ~w", [Operation]),
             {ok, Operation#operation.op_number};
         {error, Reason} ->
+	    lager:info("Error storing to log ~w", [Reason]),
             {error, Reason}
     end.
 
