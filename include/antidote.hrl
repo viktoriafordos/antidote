@@ -38,7 +38,7 @@
 -define(OLD_SS_MICROSEC,0).
 %% The number of supervisors that are responsible for
 %% supervising transaction coorinator fsms
--define(NUM_SUP, 100).
+-define(NUM_SUP, 20).
 %% Threads will sleep for this length when they have to wait
 %% for something that is not ready after which they
 %% wake up and retry. I.e. a read waiting for
@@ -46,12 +46,12 @@
 %% that read.
 -define(SPIN_WAIT, 1).
 %% HEARTBEAT_PERIOD: Period of sending the heartbeat messages in interDC layer
--define(HEARTBEAT_PERIOD, 1000).
+-define(HEARTBEAT_PERIOD, 100).
 %% VECTORCLOCK_UPDATE_PERIOD: Period of updates of the stable snapshot per partition
 -define(VECTORCLOCK_UPDATE_PERIOD, 100).
 %% This is the time that nodes will sleep inbetween sending meta-data
 %% to other physical nodes within the DC
--define(META_DATA_SLEEP, 1000).
+-define(META_DATA_SLEEP, 100).
 -define(META_TABLE_NAME, a_meta_data_table).
 -define(REMOTE_META_TABLE_NAME, a_remote_meta_data_table).
 -define(META_TABLE_STABLE_NAME, a_meta_data_table_stable).
@@ -61,7 +61,7 @@
 %% Uncomment the following line to use erlang:now()
 %% Otherwise os:timestamp() is used which can go backwards
 %% which is unsafe for clock-si
--define(SAFE_TIME, true).
+%-define(SAFE_TIME, true).
 
 -record (payload, {key:: key(), type :: type(), op_param, actor}).
 
