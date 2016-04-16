@@ -205,11 +205,42 @@ read_objects(_Clock1, _Properties, Objects, StayAlive) ->
                     {error, Reason}
             end;
         false ->
-	    case clocksi_execute_tx(Clock, Args, update_clock, StayAlive) of
-		{ok, {_TxId, Result, CommitTime}} ->
-		    {ok, Result, CommitTime};
-		{error, Reason} -> {error, Reason}
+	    case Args of
+		[_Op] -> %% Single object read = read latest value
+		    case clocksi_execute_tx(Clock, Args, update_clock, StayAlive) of
+			{ok, {_TxId, Result, CommitTime}} ->
+			    {ok, Result, CommitTime};
+			{error, Reason} -> {error, Reason}
+		    end;
+		[_|_] -> %% Read Multiple objects  = read from a snapshot
+		    %% Snapshot includes all updates committed at time GST
+		    %% from local and remore replicas
+		    case gr_snapshot_read(Clock, Args) of
+			{ok, {_TxId, Result, CommitTime}} ->
+			    {ok, Result, CommitTime};
+			{error, Reason} -> {error, Reason}
+		    end
 	    end
+    end.
+
+%%% Snapshot read for Gentlerain protocol
+gr_snapshot_read(ClientClock, Args) ->
+    %% GST = scalar stable time
+    %% VST = vector stable time with entries for each dc
+    {ok, GST, VST} = vectorclock:get_scalar_stable_time(),
+    DcId = dc_utilities:get_my_dc_id(),
+    Dt = vectorclock:get_clock_of_dc(DcId, ClientClock),
+    case Dt =< GST of
+        true ->
+            %% Set all entries in snapshot as GST
+            ST = dict:map(fun(_,_) -> GST end, VST),
+            %% ST doesnot contain entry for local dc, hence explicitly 
+            %% add it in snapshot time
+            SnapshotTime = vectorclock:set_clock_of_dc(DcId, GST, ST),
+            clocksi_execute_tx(SnapshotTime, Args, no_update_clock);
+        false ->
+            timer:sleep(10),
+            gr_snapshot_read(ClientClock, Args)
     end.
 
 %% Object creation and types
