@@ -91,7 +91,12 @@ read(Key, Type, SnapshotTime, TxId,OpsCache,SnapshotCache,Partition) ->
 						materializer_vnode_master,
 						infinity);
 	_ ->
-	    internal_read(Key, Type, SnapshotTime, TxId, OpsCache, SnapshotCache)
+            case application:get_env(antidote, only_lww) of
+                {ok, true} ->
+                    lww_materializer_utils:internal_read(Key, Type, SnapshotTime, TxId, OpsCache);
+                {ok, false} ->
+                    internal_read(Key, Type, SnapshotTime, TxId, OpsCache, SnapshotCache)
+            end
     end.
 
 -spec get_cache_name(non_neg_integer(),atom()) -> atom().
@@ -230,7 +235,12 @@ handle_command({read, Key, Type, SnapshotTime, TxId}, _Sender,
 
 handle_command({update, Key, DownstreamOp}, _Sender,
                State = #state{ops_cache = OpsCache, snapshot_cache=SnapshotCache})->
-    true = op_insert_gc(Key,DownstreamOp, OpsCache, SnapshotCache),
+    case application:get_env(antidote, only_lww) of
+        {ok, true} ->
+             true = lww_materializer_utils:op_insert_gc(Key, DownstreamOp, OpsCache);
+        {ok, false} ->            
+            true = op_insert_gc(Key,DownstreamOp, OpsCache, SnapshotCache)
+    end,
     {reply, ok, State};
 
 handle_command({store_ss, Key, Snapshot, CommitTime}, _Sender,
