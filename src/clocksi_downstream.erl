@@ -31,29 +31,36 @@
     {ok, op()} | {error, atom()}.
 generate_downstream_op(Transaction, Node, Key, Type, Update, WriteSet) ->
     {Op, Actor} = Update,
-    case clocksi_vnode:read_data_item(Node,
-        Transaction,
-        Key,
-        Type,
-        WriteSet) of
-        {ok, Snapshot} ->
-            TypeString = lists:flatten(io_lib:format("~p", [Type])),
-            case string:str(TypeString, "riak_dt") of
-                0 -> %% dealing with an op_based crdt
-                    case Type:generate_downstream(Op, Actor, Snapshot) of
-                        {ok, OpParam} ->
-                            {ok, {update, OpParam}};
-                        {error, Reason} ->
-                            {error, Reason}
-                    end;
-                1 -> %% dealing with a state_based crdt
-                    case Type:update(Op, Actor, Snapshot) of
-                        {ok, NewState} ->
-                            {ok, {merge, NewState}};
-                        {error, Reason} ->
-                            {error, Reason}
-                    end
-            end;
-        {error, Reason} ->
-            {error, Reason}
+    %% For LWW registers, we don't need to generate downstream because 
+    %% conflict resolution is done by the materializer
+    case application:get_env(antidote, only_lww) of
+        {ok, true} ->
+            {ok, {update, Op}};
+        {ok, false} ->
+                case clocksi_vnode:read_data_item(Node,
+                                                  Transaction,
+                                                  Key,
+                                                  Type,
+                                                  WriteSet) of
+                    {ok, Snapshot} ->
+                        TypeString = lists:flatten(io_lib:format("~p", [Type])),
+                        case string:str(TypeString, "riak_dt") of
+                            0 -> %% dealing with an op_based crdt
+                                case Type:generate_downstream(Op, Actor, Snapshot) of
+                                    {ok, OpParam} ->
+                                        {ok, {update, OpParam}};
+                                    {error, Reason} ->
+                                        {error, Reason}
+                                end;
+                            1 -> %% dealing with a state_based crdt
+                                case Type:update(Op, Actor, Snapshot) of
+                                    {ok, NewState} ->
+                                        {ok, {merge, NewState}};
+                                    {error, Reason} ->
+                                        {error, Reason}
+                                end
+                        end;
+                    {error, Reason} ->
+                        {error, Reason}
+                end
     end.

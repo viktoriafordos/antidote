@@ -64,7 +64,8 @@ internal_read(Key, Type, SnapshotTime, _TxId, OpsCache) ->
             case Version of 
                 ignore -> {ok, Type:new()};
                 _ -> 
-                    {ok, Snapshot} = materializer:update_snapshot(Type, Type:new(), Version#clocksi_payload.op_param),
+                    {update, {assign, Val}} = Version#clocksi_payload.op_param,
+                    {ok, Snapshot} = Type:update({assign, Val}, actor, Type:new()),
                     {ok, Snapshot}
             end
     end.
@@ -133,10 +134,11 @@ generate_payload(SnapshotTime, CommitTime, Val) ->
     Key = myreg,
     Type = riak_dt_lwwreg,
 
-    {ok,Op1} = Type:update({assign, Val, 10}, actor, Type:new()),
+%    {ok,Op1} = Type:update({assign, Val, 10}, actor, Type:new()),
     #clocksi_payload{key = Key,
 		     type = Type,
-		     op_param = {merge, Op1},
+	%	     op_param = {merge, Op1},
+                     op_param = {update, {assign, Val}},
 		     snapshot_time = vectorclock:from_list(SnapshotTime),
 		     commit_time = CommitTime,
 		     txid = 1
