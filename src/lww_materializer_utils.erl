@@ -17,6 +17,8 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
+%% This module is the materializer with cache for only supporting Registers.
 -module(lww_materializer_utils).
 
 -include("antidote.hrl").
@@ -256,9 +258,5 @@ gc_test() ->
     
     {ok, Res3} = internal_read(Key, Type, vectorclock:from_list([{DC2,3}, {DC1,3}]), ignore, OpsCache),
     ?assertEqual(15, Type:value(Res3)). %% This is actually wrong. GC is naive and just remove entries from each list per DC.
-    
-    
-    
-    
     
 -endif.
