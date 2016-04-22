@@ -13,6 +13,6 @@
                  ]},
   {mod, { antidote_app, []}},
   {env, [{txn_cert, false}, {txn_prot, gr}, {recover_from_log, false},
-         {only_lww, false}
+         {only_lww, true}
         ]}
  ]}.
