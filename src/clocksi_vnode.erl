@@ -498,13 +498,13 @@ commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
             Transaction#transaction.vec_snapshot_time}},
     case Updates of
         [{Key, _Type, {_Op, _Param}} | _Rest] ->
-	    case application:get_env(antidote,txn_cert) of
-		{ok, true} ->
-		    lists:foreach(fun({K, _, _}) -> true = ets:insert(CommittedTx, {K, TxCommitTime}) end,
-				  Updates);
-		_ ->
-		    ok
-	    end,
+	    %% case application:get_env(antidote,txn_cert) of
+	    %% 	{ok, true} ->
+	    %% 	    lists:foreach(fun({K, _, _}) -> true = ets:insert(CommittedTx, {K, TxCommitTime}) end,
+	    %% 			  Updates);
+	    %% 	_ ->
+	    %% 	    ok
+	    %% end,
             LogId = log_utilities:get_logid_from_key(Key),
             [Node] = log_utilities:get_preflist_from_key(Key),
             case logging_vnode:append_commit(Node, LogId, LogRecord) of
@@ -578,42 +578,43 @@ clean_prepared(PreparedTx, [{Key, _Type, {_Op, _Actor}} | Rest], TxId) ->
 now_microsec({MegaSecs, Secs, MicroSecs}) ->
     (MegaSecs * 1000000 + Secs) * 1000000 + MicroSecs.
 
-certification_check(TxId, Updates, CommittedTx, PreparedTx) ->
-    case application:get_env(antidote, txn_cert) of
-        {ok, true} -> 
-        %io:format("AAAAH"),
-        certification_with_check(TxId, Updates, CommittedTx, PreparedTx);
-        _  -> true
-    end.
+certification_check(_TxId, _Updates, _CommittedTx, _PreparedTx) ->
+    %% case application:get_env(antidote, txn_cert) of
+    %%     {ok, true} -> 
+    %%     %io:format("AAAAH"),
+    %%     certification_with_check(TxId, Updates, CommittedTx, PreparedTx);
+    %%     _  -> true
+    %% end.
+    true.
 
 %% @doc Performs a certification check when a transaction wants to move
 %%      to the prepared state.
-certification_with_check(_, [], _, _) ->
-    true;
-certification_with_check(TxId, [H | T], CommittedTx, PreparedTx) ->
-    SnapshotTime = TxId#tx_id.snapshot_time,
-    {Key, _, _} = H,
-    case ets:lookup(CommittedTx, Key) of
-        [{Key, CommitTime}] ->
-            case CommitTime > SnapshotTime of
-                true ->
-                    false;
-                false ->
-                    case check_prepared(TxId, PreparedTx, Key) of
-                        true ->
-                            certification_with_check(TxId, T, CommittedTx, PreparedTx);
-                        false ->
-                            false
-                    end
-            end;
-        [] ->
-            case check_prepared(TxId, PreparedTx, Key) of
-                true ->
-                    certification_with_check(TxId, T, CommittedTx, PreparedTx);
-                false ->
-                    false
-            end
-    end.
+%% certification_with_check(_, [], _, _) ->
+%%     true;
+%% certification_with_check(TxId, [H | T], CommittedTx, PreparedTx) ->
+%%     SnapshotTime = TxId#tx_id.snapshot_time,
+%%     {Key, _, _} = H,
+%%     case ets:lookup(CommittedTx, Key) of
+%%         [{Key, CommitTime}] ->
+%%             case CommitTime > SnapshotTime of
+%%                 true ->
+%%                     false;
+%%                 false ->
+%%                     case check_prepared(TxId, PreparedTx, Key) of
+%%                         true ->
+%%                             certification_with_check(TxId, T, CommittedTx, PreparedTx);
+%%                         false ->
+%%                             false
+%%                     end
+%%             end;
+%%         [] ->
+%%             case check_prepared(TxId, PreparedTx, Key) of
+%%                 true ->
+%%                     certification_with_check(TxId, T, CommittedTx, PreparedTx);
+%%                 false ->
+%%                     false
+%%             end
+%%     end.
 
 check_prepared(TxId, PreparedTx, Key) ->
     _SnapshotTime = TxId#tx_id.snapshot_time,
