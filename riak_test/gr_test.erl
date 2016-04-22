@@ -32,7 +32,7 @@ confirm() ->
     NumVNodes = rt_config:get(num_vnodes, 8),
     rt:update_app_config(all,[
                               {riak_core, [{ring_creation_size, NumVNodes}]},
-                              {antidote, [{txn_prot, gr}]}
+                              {antidote, [{txn_prot, gr},{only_lww, true}]}
                              ]),
     [Nodes1, Nodes2] = rt:build_clusters([1,1]),
     
@@ -69,32 +69,32 @@ confirm() ->
 read_write_test(Nodes) ->
     lager:info("Single read write test"),
     Node = hd(Nodes),
-    Bound_object = {key, riak_dt_pncounter, bucket},
-    {ok, [0], _} = rpc:call(Node, antidote, read_objects, [ignore, {}, [Bound_object]]),
-    {ok, _} = rpc:call(Node, antidote, update_objects, [ignore, {}, [{Bound_object, increment, 1}]]),    
+    Bound_object = {key, riak_dt_lwwreg, bucket},
+    {ok,[<<>>], _} = rpc:call(Node, antidote, read_objects, [ignore, {}, [Bound_object]]),
+    {ok, _} = rpc:call(Node, antidote, update_objects, [ignore, {}, [{Bound_object, assign, a}]]),    
     {ok, Res, _} = rpc:call(Node, antidote, read_objects, [ignore, {}, [Bound_object]]),
-    ?assertMatch([1], Res).
+    ?assertMatch([a], Res).
 
 read_multiple_test(Nodes) ->
     lager:info("Snapshot read"),
     Node = hd(Nodes),
-    O1 = {o1, riak_dt_pncounter, bucket},
-    {ok, _} = rpc:call(Node, antidote, update_objects, [ignore, {}, [{O1, increment, 1}]]),
-    O2 = {o2, riak_dt_pncounter, bucket},
-    {ok, CT} = rpc:call(Node, antidote, update_objects, [ignore, {}, [{O2, increment, 1}]]),
+    O1 = {o1, riak_dt_lwwreg, bucket},
+    {ok, _} = rpc:call(Node, antidote, update_objects, [ignore, {}, [{O1, assign, b}]]),
+    O2 = {o2, riak_dt_lwwreg, bucket},
+    {ok, CT} = rpc:call(Node, antidote, update_objects, [ignore, {}, [{O2, assign, c}]]),
     {ok, Res, _} = rpc:call(Node, antidote, read_objects, [CT, {}, [O1,O2]]),
-    ?assertMatch([1,1], Res).
+    ?assertMatch([c,b], Res).
 
 replication_test(Node1, Node2) ->
-    O1 = {r1, riak_dt_pncounter, bucket},
-    O2 = {r2, riak_dt_pncounter, bucket},
+    O1 = {r1, riak_dt_lwwreg, bucket},
+    O2 = {r2, riak_dt_lwwreg, bucket},
     %% Write to DC1
-    {ok, _CT1} = rpc:call(Node1, antidote, update_objects, [ignore, {}, [{O1, increment, 1}]]),
+    {ok, _CT1} = rpc:call(Node1, antidote, update_objects, [ignore, {}, [{O1, assign, a}]]),
     %% Write to DC2
-    {ok, CT2} = rpc:call(Node2, antidote, update_objects, [ignore, {}, [{O2, increment, 1}]]),
+    {ok, CT2} = rpc:call(Node2, antidote, update_objects, [ignore, {}, [{O2, assign, b}]]),
     %% Read r1 from DC2, with dependency to first write
     {ok, [Res1], _} = rpc:call(Node2, antidote, read_objects, [ignore, {}, [O1]]),
     lager:info("Read r1 from DC2: ~p", [Res1]), %% Result could be 0 or 1, there is no guarantee
     {ok, Res2, _} = rpc:call(Node2, antidote, read_objects, [CT2, {}, [O1, O2]]),
     %% Since CT1 < CT2, any snapshot that includes second write must include first write
-    ?assertMatch([1,1], Res2).
+    ?assertMatch([b,a], Res2).
