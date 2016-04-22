@@ -489,7 +489,7 @@ reset_prepared(PreparedTx, [{Key, _Type, {_Op, _Actor}} | Rest], TxId, Time, Act
     true = ets:insert(PreparedTx, {Key, [{TxId, Time} | dict:fetch(Key, ActiveTxs)]}),
     reset_prepared(PreparedTx, Rest, TxId, Time, ActiveTxs).
 
-commit(Transaction, TxCommitTime, Updates, CommittedTx, State) ->
+commit(Transaction, TxCommitTime, Updates, _CommittedTx, State) ->
     TxId = Transaction#transaction.txn_id,
     DcId = dc_utilities:get_my_dc_id(),
     LogRecord = #log_record{tx_id = TxId,
@@ -616,14 +616,14 @@ certification_check(_TxId, _Updates, _CommittedTx, _PreparedTx) ->
 %%             end
 %%     end.
 
-check_prepared(TxId, PreparedTx, Key) ->
-    _SnapshotTime = TxId#tx_id.snapshot_time,
-    case ets:lookup(PreparedTx, Key) of
-        [] ->
-            true;
-        _ ->
-            false
-    end.
+%% check_prepared(TxId, PreparedTx, Key) ->
+%%     _SnapshotTime = TxId#tx_id.snapshot_time,
+%%     case ets:lookup(PreparedTx, Key) of
+%%         [] ->
+%%             true;
+%%         _ ->
+%%             false
+%%     end.
 
 -spec update_materializer(DownstreamOps :: [{key(), type(), op()}],
     Transaction :: tx(), TxCommitTime :: {term(), term()}) ->
