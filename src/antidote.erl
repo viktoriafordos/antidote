@@ -178,8 +178,8 @@ update_objects(_Clock1, _Properties, Updates, StayAlive) ->
 read_objects(Clock, Properties, Objects) ->
     read_objects(Clock, Properties, Objects, false).
 
-read_objects(Clock, _Properties, Objects, StayAlive) ->
-    %%Clock = ignore,
+read_objects(_Clock1, _Properties, Objects, StayAlive) ->
+    Clock = ignore,
     Args = lists:map(
              fun({Key, Type, _Bucket}) ->
                      {read, {Key, Type}}
