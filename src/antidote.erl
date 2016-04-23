@@ -44,6 +44,7 @@
 %% ==========================================================
 %% Old APIs, We would still need them for tests and benchmarks
 -export([append/3,
+	 append/4,
          read/2,
          clocksi_execute_tx/4,
          clocksi_execute_tx/3,
@@ -142,9 +143,8 @@ update_objects(Updates, TxId) ->
 update_objects(Clock, Properties, Updates) ->
     update_objects(Clock, Properties, Updates, false).
 
-update_objects(_Clock1, _Properties, Updates, StayAlive) ->
+update_objects(Clock, _Properties, Updates, StayAlive) ->
     Actor = actor, %% TODO: generate unique actors
-    Clock = ignore,
     Operations = lists:map(
                    fun({{Key, Type, _Bucket}, Op, OpParam}) ->
                            {update, {Key, Type, {{Op,OpParam}, Actor}}}
@@ -152,16 +152,13 @@ update_objects(_Clock1, _Properties, Updates, StayAlive) ->
                    Updates),
     SingleKey = case Operations of
                     [_O] -> %% Single key update
-                        case Clock of 
-                            ignore -> true;
-                            _ -> false
-                        end;
+			true;
                     [_H|_T] -> false
                 end,
     case SingleKey of 
         true ->  %% if single key, execute the fast path
             [{update, {K, T, Op}}] = Operations,
-            case append(K, T, Op) of
+            case append(Clock, K, T, Op) of
                 {ok, {_TxId, [], CT}} ->
                     {ok, CT};
                 {error, Reason} ->
@@ -178,8 +175,7 @@ update_objects(_Clock1, _Properties, Updates, StayAlive) ->
 read_objects(Clock, Properties, Objects) ->
     read_objects(Clock, Properties, Objects, false).
 
-read_objects(_Clock1, _Properties, Objects, StayAlive) ->
-    Clock = ignore,
+read_objects(Clock, _Properties, Objects, StayAlive) ->
     Args = lists:map(
              fun({Key, Type, _Bucket}) ->
                      {read, {Key, Type}}
@@ -187,10 +183,7 @@ read_objects(_Clock1, _Properties, Objects, StayAlive) ->
              Objects),
     SingleKey = case Args of
                     [_O] -> %% Single key update
-                        case Clock of 
-                            ignore -> true;
-                            _ -> false
-                        end;
+			true;
                     [_H|_T] -> false
                 end,
     case SingleKey of
@@ -199,7 +192,7 @@ read_objects(_Clock1, _Properties, Objects, StayAlive) ->
             case materializer:check_operations([{read, {Key, Type}}]) of
                 ok ->
                     {ok, Val, CommitTime} = clocksi_interactive_tx_coord_fsm:
-                        perform_singleitem_read(Key,Type),
+                        perform_singleitem_read(Clock, Key,Type),
                     {ok, [Val], CommitTime};
                 {error, Reason} ->
                     {error, Reason}
@@ -233,11 +226,16 @@ delete_object({_Key, _Type, _Bucket}) ->
 -spec append(key(), type(), {op(),term()}) ->
                     {ok, {txid(), [], snapshot_time()}} | {error, term()}.
 append(Key, Type, {OpParams, Actor}) ->
+    append(ignore, Key, Type, {OpParams, Actor}).
+
+-spec append(snapshot() | ignore, key(), type(), {op(),term()}) ->
+                    {ok, {txid(), [], snapshot_time()}} | {error, term()}.
+append(Clock, Key, Type, {OpParams, Actor}) ->
     case materializer:check_operations([{update,
                                          {Key, Type, {OpParams, Actor}}}]) of
         ok ->
             clocksi_interactive_tx_coord_fsm:
-                perform_singleitem_update(Key, Type,{OpParams,Actor});
+                perform_singleitem_update(Clock, Key, Type,{OpParams,Actor});
         {error, Reason} ->
             {error, Reason}
     end.
@@ -249,7 +247,7 @@ read(Key, Type) ->
     case materializer:check_operations([{read, {Key, Type}}]) of
         ok ->
             {ok, Val, _CommitTime} = clocksi_interactive_tx_coord_fsm:
-                perform_singleitem_read(Key,Type),
+                perform_singleitem_read(ignore, Key,Type),
             {ok, Val};
         {error, Reason} ->
             {error, Reason}
