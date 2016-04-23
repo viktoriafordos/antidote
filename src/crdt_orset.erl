@@ -215,7 +215,9 @@ remove_elem({Elem,RemoveTokens},ORDict) ->
                 [] ->
                     {ok, ORDict};
                 _ ->
-                    {error, {precondition, {not_present, Elem}}}
+		    %% dont crash if not present
+                    %% {error, {precondition, {not_present, Elem}}}
+		    {ok, ORDict}
             end
     end.
 
