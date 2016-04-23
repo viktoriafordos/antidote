@@ -226,7 +226,8 @@ check_clock(Key,Transaction,PreparedCache,Partition) ->
     Time = clocksi_vnode:now_microsec(dc_utilities:now()),
     case T_TS > Time of
         true ->
-	    {not_ready, (T_TS - Time) div 1000 +1};
+	    %% {not_ready, (T_TS - Time) div 1000 +1};
+	    check_prepared(Key,Transaction,PreparedCache,Partition);
         false ->
 	    check_prepared(Key,Transaction,PreparedCache,Partition)
     end.

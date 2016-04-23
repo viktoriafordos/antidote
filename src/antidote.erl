@@ -143,7 +143,8 @@ update_objects(Updates, TxId) ->
 update_objects(Clock, Properties, Updates) ->
     update_objects(Clock, Properties, Updates, false).
 
-update_objects(Clock, _Properties, Updates, StayAlive) ->
+update_objects(_Clock, _Properties, Updates, StayAlive) ->
+    Clock = ignore,
     Actor = actor, %% TODO: generate unique actors
     Operations = lists:map(
                    fun({{Key, Type, _Bucket}, Op, OpParam}) ->
@@ -175,7 +176,8 @@ update_objects(Clock, _Properties, Updates, StayAlive) ->
 read_objects(Clock, Properties, Objects) ->
     read_objects(Clock, Properties, Objects, false).
 
-read_objects(Clock, _Properties, Objects, StayAlive) ->
+read_objects(_Clock, _Properties, Objects, StayAlive) ->
+    Clock = ignore,
     Args = lists:map(
              fun({Key, Type, _Bucket}) ->
                      {read, {Key, Type}}
