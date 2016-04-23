@@ -220,7 +220,7 @@ perform_read_internal(Coordinator,Key,Type,Transaction,OpsCache,SnapshotCache,Pr
 %%      if local clock is behind, it sleeps the fms until the clock
 %%      catches up. CLOCK-SI: clock skew.
 %%
-check_clock(Key,Transaction,PreparedCache,Partition) ->
+check_clock(_Key,Transaction,_PreparedCache,_Partition) ->
     TxId = Transaction#transaction.txn_id,
     T_TS = TxId#tx_id.snapshot_time,
     Time = clocksi_vnode:now_microsec(dc_utilities:now()),
@@ -228,27 +228,28 @@ check_clock(Key,Transaction,PreparedCache,Partition) ->
         true ->
 	    {not_ready, (T_TS - Time) div 1000 +1};
         false ->
-	    check_prepared(Key,Transaction,PreparedCache,Partition)
+	    ready
+	    %% check_prepared(Key,Transaction,PreparedCache,Partition)
     end.
 
 %% @doc check_prepared: Check if there are any transactions
 %%      being prepared on the tranaction being read, and
 %%      if they could violate the correctness of the read
-check_prepared(Key,Transaction,PreparedCache,Partition) ->
-    TxId = Transaction#transaction.txn_id,
-    SnapshotTime = TxId#tx_id.snapshot_time,
-    {ok, ActiveTxs} = clocksi_vnode:get_active_txns_key(Key,Partition,PreparedCache),
-    check_prepared_list(Key,SnapshotTime,ActiveTxs).
+%% check_prepared(Key,Transaction,PreparedCache,Partition) ->
+%%     TxId = Transaction#transaction.txn_id,
+%%     SnapshotTime = TxId#tx_id.snapshot_time,
+%%     {ok, ActiveTxs} = clocksi_vnode:get_active_txns_key(Key,Partition,PreparedCache),
+%%     check_prepared_list(Key,SnapshotTime,ActiveTxs).
 
-check_prepared_list(_Key,_SnapshotTime,[]) ->
-    ready;
-check_prepared_list(Key,SnapshotTime,[{_TxId,Time}|Rest]) ->
-    case Time =< SnapshotTime of
-    true ->
-        {not_ready, ?SPIN_WAIT};
-    false ->
-        check_prepared_list(Key,SnapshotTime,Rest)
-    end.
+%% check_prepared_list(_Key,_SnapshotTime,[]) ->
+%%     ready;
+%% check_prepared_list(Key,SnapshotTime,[{_TxId,Time}|Rest]) ->
+%%     case Time =< SnapshotTime of
+%%     true ->
+%%         {not_ready, ?SPIN_WAIT};
+%%     false ->
+%%         check_prepared_list(Key,SnapshotTime,Rest)
+%%     end.
 
 %% @doc return:
 %%  - Reads and returns the log of specified Key using replication layer.
