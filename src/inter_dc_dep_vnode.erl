@@ -63,7 +63,9 @@
 %% Passes the received transaction to the dependency buffer.
 %% At this point no message can be lost (the transport layer must ensure all transactions are delivered reliably).
 -spec handle_transaction(#interdc_txn{}) -> ok.
-handle_transaction(Txn=#interdc_txn{partition = P}) -> dc_utilities:call_vnode_sync(P, inter_dc_dep_vnode_master, {txn, Txn}).
+handle_transaction(Txn=#interdc_txn{partition = P}) ->
+    dc_utilities:call_vnode(P, inter_dc_dep_vnode_master, {txn, Txn}),
+    ok.
 
 %%%% VNode methods ----------------------------------------------------------+
 
@@ -113,13 +115,13 @@ try_store(State, Txn=#interdc_txn{dcid = DCID, partition = Partition, timestamp 
   CurrentClock = vectorclock:set_clock_of_dc(DCID, 0, get_partition_clock(State)),
 
   %% Check if the current clock is greater than or equal to the dependency vector
-  case vectorclock:ge(CurrentClock, Dependencies) of
+    case vectorclock:ge(CurrentClock, Dependencies) of
 
     %% If not, the transaction will not be stored right now.
-    false -> {State, false};
+    %false -> {State, false};
 
     %% If so, store the transaction
-    true ->
+    _ ->
       %% Put the operations in the log
       Payloads = [Op#operation.payload || Op <- Ops],
       {ok, _} = logging_vnode:append_group(dc_utilities:partition_to_indexnode(Partition), [Partition], Payloads, false),

@@ -82,8 +82,8 @@
     receive_aborted/2,
     abort/1,
     abort/2,
-    perform_singleitem_read/2,
-    perform_singleitem_update/3,
+    perform_singleitem_read/3,
+    perform_singleitem_update/4,
     reply_to_client/1,
     generate_name/1]).
 
@@ -187,9 +187,9 @@ create_transaction_record(ClientClock, UpdateClock, StayAlive, From, IsStatic) -
 %%      server located at the vnode of the key being read.  This read
 %%      is supposed to be light weight because it is done outside of a
 %%      transaction fsm and directly in the calling thread.
--spec perform_singleitem_read(key(), type()) -> {ok, val(), snapshot_time()} | {error, reason()}.
-perform_singleitem_read(Key, Type) ->
-    {Transaction, _TransactionId} = create_transaction_record(ignore, update_clock, false, undefined, true),
+-spec perform_singleitem_read(snapshot_time() | ignore, key(), type()) -> {ok, val(), snapshot_time()} | {error, reason()}.
+perform_singleitem_read(ClientClock, Key, Type) ->
+    {Transaction, _TransactionId} = create_transaction_record(ClientClock, update_clock, false, undefined, true),
     %% Time = dc_utilities:print_now(start, 0),
     Preflist = log_utilities:get_preflist_from_key(Key),
     %% Time2 = dc_utilities:print_now(prefilst, Time),
@@ -209,10 +209,10 @@ perform_singleitem_read(Key, Type) ->
 %% @doc This is a standalone function for directly contacting the update
 %%      server vnode.  This is lighter than creating a transaction
 %%      because the update/prepare/commit are all done at one time
--spec perform_singleitem_update(key(), type(), {op(), term()}) -> {ok, {txid(), [], snapshot_time()}} | {error, term()}.
-perform_singleitem_update(Key, Type, Params) ->
+-spec perform_singleitem_update(snapshot_time() | ignore, key(), type(), {op(), term()}) -> {ok, {txid(), [], snapshot_time()}} | {error, term()}.
+perform_singleitem_update(Clock, Key, Type, Params) ->
     %% Time1 = dc_utilities:print_now(startwrite, 0),
-    {Transaction, _TransactionId} = create_transaction_record(ignore, update_clock, false, undefined, true),
+    {Transaction, _TransactionId} = create_transaction_record(Clock, update_clock, false, undefined, true),
     Preflist = log_utilities:get_preflist_from_key(Key),
     IndexNode = hd(Preflist),
     %% Time2 = dc_utilities:print_now(preflistwrite, Time1),
