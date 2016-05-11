@@ -21,6 +21,7 @@ confirm() ->
   rt:wait_until_ring_converged(Cluster3),
 
   ok = common:setup_dc_manager([Cluster1, Cluster2, Cluster3], first_run),
+  io:format("~nDC setup is done for clusters.~n"),
 
   main_test(Cluster1, Cluster2, Cluster3),
   pass.
@@ -65,7 +66,10 @@ get_val_store(Node, Store, Clock) ->
 
 dc1_txns(Node, Store, ReplyTo) ->
   ?assertEqual(get_val_store(Node, Store, ignore), 5),
-  par_txns(Node, Store, ReplyTo).
+  par_txns(Node, Store, ReplyTo),
+  StoreDest = {store_2, riak_dt_pncounter, bucket},
+  CT = comm_test:event(?MODULE, [3, Node, [Store, StoreDest, 3]]),
+  CT.
 
 dc2_txns(Node, Store, ReplyTo) ->
   ?assertEqual(get_val_store(Node, Store, ignore), 5),
@@ -92,14 +96,19 @@ par_txns(Node, Store, _ReplyTo) ->
 %%%====================================
 %%% Callbacks
 %%%====================================
-handle_event([1, Node, Args]) ->
-    [Store, N] = Args,
+handle_event([1, Node, AppArgs]) ->
+    [Store, N] = AppArgs,
     {Res1, {_Tx1, CT1}} = online_store:remove_from_store(Node, Store, N),
     %%?assertMatch(Res1, 2),
     {Res1, CT1};
 
-handle_event([2, Node, Args]) ->
-    [Store, N] = Args,
+handle_event([2, Node, AppArgs]) ->
+    [Store, N] = AppArgs,
     {Res2, {_Tx2, CT2}} = online_store:add_to_store(Node, Store, N),
     %%?assertMatch(Res2, 4),
-    {Res2, CT2}.
+    {Res2, CT2};
+
+handle_event([3, Node, AppArgs]) ->
+    [Store1, Store2, N] = AppArgs,
+    CT = online_store:transfer(Node, Store1, Store2, N),
+    CT.

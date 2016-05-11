@@ -1,7 +1,7 @@
 -module(online_store).
 
 %% API
--export([add_to_store/3, remove_from_store/3]).
+-export([add_to_store/3, remove_from_store/3, transfer/4]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -28,3 +28,13 @@ add_to_store(Node, Store, Num) ->
   {ok, CT2} = rpc:call(Node, antidote, commit_transaction, [Tx2]),
   lager:info("Txn2 with ID: ~p committed on Node: ~p", [Tx2, Node]),
   {Res2, {Tx2, CT2}}.
+
+transfer(Node, StoreSrc, StoreDes, Num) ->
+  {ok, TxTrnsfr} = rpc:call(Node, antidote, start_transaction, [ignore, []]),
+  lager:info("Txn with ID: ~p, started on Node: ~p", [TxTrnsfr, Node]),
+  %% ok = rpc:call(Node, antidote, update_objects, [[{{store_3,riak_dt_pncounter, bucket}, increment, 3}], TxTrnsfr]),
+  ok = rpc:call(Node, antidote, update_objects, [[{StoreSrc, decrement, Num}, {StoreDes, increment, Num}], TxTrnsfr]),
+  lager:info("Txn with ID: ~p, updated Stores on Node: ~p", [TxTrnsfr, Node]),
+  {ok, CT} = rpc:call(Node, antidote, commit_transaction, [TxTrnsfr]),
+  lager:info("Txn with ID: ~p committed on Node: ~p", [TxTrnsfr, Node]),
+  CT.
