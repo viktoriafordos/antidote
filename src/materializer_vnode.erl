@@ -71,10 +71,12 @@
          handle_exit/3]).
 
 -record(state, {
+	  is_handoff_receiver :: boolean(),
+	  handoff_target :: term(),
 	  partition :: partition_id(),
 	  ops_cache :: cache_id(),
 	  snapshot_cache :: cache_id(),
-	  is_ready :: boolean()}).
+	  is_ready :: true | false | handoff}).
 
 start_vnode(I) ->
     riak_core_vnode_master:get_vnode_pid(I, ?MODULE).
@@ -127,7 +129,7 @@ init([Partition]) ->
 		  _ ->
 		      true
 	      end,
-    {ok, #state{is_ready = IsReady, partition=Partition, ops_cache=OpsCache, snapshot_cache=SnapshotCache}}.
+    {ok, #state{is_ready = IsReady, is_handoff_receiver=false, partition=Partition, ops_cache=OpsCache, snapshot_cache=SnapshotCache}}.
 
 -spec load_from_log_to_tables(partition_id(), ets:tid(), ets:tid()) -> ok | {error, reason()}.
 load_from_log_to_tables(Partition, OpsCache, SnapshotCache) ->
@@ -208,8 +210,27 @@ check_table_ready([{Partition,Node}|Rest]) ->
     end.
 
 handle_command({hello}, _Sender, State) ->
-  {reply, ok, State};
+    {reply, ok, State};
 
+handle_command({finished_receiving_handoff_data}, _Sender, State) ->
+    lager:info("finished receiving handoff data!!!!!"),
+    {reply, ok, State#state{is_handoff_receiver=false,is_ready=true}};
+
+handle_command({will_receive_handoff_data}, _Sender, State=#state{ops_cache=OpsCache,snapshot_cache=SnapshotCache}) ->
+    ets:delete_all_objects(OpsCache),
+    ets:delete_all_objects(SnapshotCache),
+    lager:info("will receive handoff data!!!!!"),
+    {reply, ok, State#state{is_handoff_receiver=true,is_ready=true}};
+
+handle_command({handoff_failed}, _Sender, State=#state{ops_cache=OpsCache,snapshot_cache=SnapshotCache}) ->
+    lager:info("handoff failed!!!!!"),
+    ets:delete_all_objects(OpsCache),
+    ets:delete_all_objects(SnapshotCache),
+    riak_core_vnode:send_command_after(?LOG_STARTUP_WAIT, load_from_log),
+    {reply, ok, State#state{is_handoff_receiver=false,is_ready=false}};
+
+%% handle_command({check_ready},_Sender,State = #state{is_handoff_receiver=true}) ->
+%%     {reply, false, State};
 handle_command({check_ready},_Sender,State = #state{partition=Partition, is_ready=IsReady}) ->
     Result = case ets:info(get_cache_name(Partition,ops_cache)) of
 		 undefined ->
@@ -239,6 +260,10 @@ handle_command({store_ss, Key, Snapshot, CommitTime}, _Sender,
     internal_store_ss(Key,Snapshot,CommitTime,OpsCache,SnapshotCache,false),
     {noreply, State};
 
+handle_command(load_from_log, _Sender, State=#state{is_handoff_receiver=true}) ->
+    {noreply, State};
+handle_command(load_from_log, _Sender, State=#state{is_ready=true}) ->
+    {noreply, State};
 handle_command(load_from_log, _Sender, State=#state{partition=Partition,
 						    ops_cache=OpsCache,
 						    snapshot_cache=SnapshotCache}) ->
@@ -272,26 +297,37 @@ handle_command(_Message, _Sender, State) ->
 
 handle_handoff_command(?FOLD_REQ{foldfun=Fun, acc0=Acc0},
                        _Sender,
-                       State = #state{ops_cache = OpsCache}) ->
-    F = fun(Key, A) ->
-		[Key1|_] = tuple_to_list(Key),
-                Fun(Key1, Key, A)
+                       State = #state{ops_cache = OpsCache, snapshot_cache = SnapshotCache}) ->
+    F = fun(OpsList, A) ->
+		Key = element(1,OpsList),
+		SnapshotList = ets:lookup(SnapshotCache,Key),
+                Fun(Key, {OpsList,SnapshotList}, A)
         end,
     Acc = ets:foldl(F, Acc0, OpsCache),
+    %% ets:delete_all_objects(OpsCache),
+    %% ets:delete_all_objects(SnapshotCache),
     {reply, Acc, State}.
 
-handoff_starting(_TargetNode, State) ->
-    {true, State}.
+handoff_starting({_HandoffType,TargetNode}, State=#state{partition=Partition}) ->
+    lager:info("handoff starting on ~p, target ~p", [Partition,TargetNode]),
+    ok = riak_core_vnode_master:sync_command(TargetNode, {will_receive_handoff_data},
+                                        materializer_vnode_master),
+    {true, State#state{handoff_target=TargetNode}}.
 
-handoff_cancelled(State) ->
+handoff_cancelled(State=#state{handoff_target=TargetNode}) ->
+    ok = riak_core_vnode_master:sync_command(TargetNode, {handoff_failed},
+                                        materializer_vnode_master),
     {ok, State}.
 
-handoff_finished(_TargetNode, State) ->
+handoff_finished(TargetNode, State) ->
+    lager:info("hand off finished!!!!!!!!!!!!!!!!!!!aaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+    ok = riak_core_vnode_master:sync_command(TargetNode, {finished_receiving_handoff_data},
+                                        materializer_vnode_master),
     {ok, State}.
 
-handle_handoff_data(Data, State=#state{ops_cache=OpsCache}) ->
-    {_Key, Operation} = binary_to_term(Data),
-    true = ets:insert(OpsCache, Operation),
+handle_handoff_data(Data, State=#state{ops_cache=OpsCache,snapshot_cache=_SnapshotCache}) ->
+    {_Key, {OpList,_SnapshotList}} = binary_to_term(Data),
+    true = ets:insert(OpsCache, OpList),
     {reply, ok, State}.
 
 encode_handoff_item(Key, Operation) ->
@@ -323,8 +359,6 @@ terminate(_Reason, _State=#state{ops_cache=OpsCache,snapshot_cache=SnapshotCache
 	    ok
     end,
     ok.
-
-
 
 %%---------------- Internal Functions -------------------%%
 

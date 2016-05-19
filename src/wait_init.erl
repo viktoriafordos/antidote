@@ -64,14 +64,14 @@ check_ready(Node) ->
 			    lager:info("Node ~w is ready! ~n", [Node]),
 			    true;
 			false ->
-			    lager:info("Node ~w is not ready ~n", [Node]),
+			    lager:info("Node ~w materializer tables are not ready ~n", [Node]),
 			    false
 		    end;
 		false ->
-		    lager:info("Checking if node ~w is ready ~n", [Node]),
+		    lager:info("Node ~w read servers are not ready ~n", [Node]),
 		    false
 	    end;
 	false ->
-	    lager:info("Checking if node ~w is ready ~n", [Node]),
+	    lager:info("Node ~w clocksi tables are not ready ~n", [Node]),
 	    false
     end.                
