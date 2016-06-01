@@ -216,16 +216,16 @@ handle_command({finished_receiving_handoff_data}, _Sender, State) ->
     lager:info("finished receiving handoff data!!!!!"),
     {reply, ok, State#state{is_handoff_receiver=false,is_ready=true}};
 
-handle_command({will_receive_handoff_data}, _Sender, State=#state{ops_cache=OpsCache,snapshot_cache=SnapshotCache}) ->
-    ets:delete_all_objects(OpsCache),
-    ets:delete_all_objects(SnapshotCache),
+handle_command({will_receive_handoff_data}, _Sender, State=#state{ops_cache=_OpsCache,snapshot_cache=_SnapshotCache}) ->
+    %ets:delete_all_objects(OpsCache),
+    %ets:delete_all_objects(SnapshotCache),
     lager:info("will receive handoff data!!!!!"),
     {reply, ok, State#state{is_handoff_receiver=true,is_ready=true}};
 
-handle_command({handoff_failed}, _Sender, State=#state{ops_cache=OpsCache,snapshot_cache=SnapshotCache}) ->
+handle_command({handoff_failed}, _Sender, State=#state{ops_cache=_OpsCache,snapshot_cache=_SnapshotCache}) ->
     lager:info("handoff failed!!!!!"),
-    ets:delete_all_objects(OpsCache),
-    ets:delete_all_objects(SnapshotCache),
+    %%ets:delete_all_objects(OpsCache),
+    %%ets:delete_all_objects(SnapshotCache),
     riak_core_vnode:send_command_after(?LOG_STARTUP_WAIT, load_from_log),
     {reply, ok, State#state{is_handoff_receiver=false,is_ready=false}};
 
@@ -327,6 +327,7 @@ handoff_finished(TargetNode, State) ->
 
 handle_handoff_data(Data, State=#state{ops_cache=OpsCache,snapshot_cache=_SnapshotCache}) ->
     {_Key, {OpList,_SnapshotList}} = binary_to_term(Data),
+    lager:info("The ops got during handoff ~p", [OpList]),
     true = ets:insert(OpsCache, OpList),
     {reply, ok, State}.
 
