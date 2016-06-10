@@ -183,6 +183,7 @@ read_objects(Clock, _Properties, Objects, StayAlive) ->
                      {read, {Key, Type}}
              end,
              Objects),
+    %lager:info("Before iread ~p", [Args]),
     SingleKey = case Args of
                     [_O] -> %% Single key update
                         case Clock of 
@@ -308,10 +309,13 @@ clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive) ->
 			       ok = gen_fsm:send_event(TxPid, {start_tx, self(), Clock, Operations, UpdateClock}),
 			       TxPid
 		       end,
+        %lager:info("Before sending read"),
 	    case gen_fsm:sync_send_event(CoordPid, execute, ?OP_TIMEOUT) of
 		{aborted, Info} ->
+            %lager:info("Read failed"),
 		    {error, {aborted, Info}};
 		Other ->
+            %lager:info("Read succeeded"),
 		    Other
 	    end
     end.
@@ -395,8 +399,10 @@ clocksi_istart_tx() ->
 
 -spec clocksi_iread(txid(), key(), type()) -> {ok, term()} | {error, reason()}.
 clocksi_iread({_, _, CoordFsmPid}, Key, Type) ->
+    lager:info("before mat read"),
     case materializer:check_operations([{read, {Key, Type}}]) of
         ok ->
+            lager:info("op checked"),
             case gen_fsm:sync_send_event(CoordFsmPid, {read, {Key, Type}}, ?OP_TIMEOUT) of
                 {ok, Res} -> {ok, Res};
                 {error, Reason} -> {error, Reason}

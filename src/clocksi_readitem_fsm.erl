@@ -89,9 +89,10 @@ read_data_item({Partition,Node},Key,Type,Transaction) ->
 			{perform_read,Key,Type,Transaction},infinity)
     catch
         _:Reason ->
-            lager:error("Exception caught: ~p, starting read server to fix", [Reason]),
-	    check_server_ready([{Partition,Node}]),
-            read_data_item({Partition,Node},Key,Type,Transaction)
+            lager:error("Exception caught: ~p", [Reason]),
+            {error, Reason}
+	        %check_server_ready([{Partition,Node}]),
+            %read_data_item({Partition,Node},Key,Type,Transaction)
     end.
 
 -spec async_read_data_item(index_node(), key(), type(), tx(), term()) -> ok.

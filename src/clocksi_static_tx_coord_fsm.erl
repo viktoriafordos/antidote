@@ -126,8 +126,10 @@ execute_batch_ops(execute, Sender, SD=#tx_coord_state{operations = Operations,
 					            NewUpdatedPartitions ->  Acc#tx_coord_state{updated_partitions= NewUpdatedPartitions}
 					        end;
 				        {read, {Key, Type}} ->
+                            %lager:info("Before reading"),
                             Preflist = ?LOG_UTIL:get_preflist_from_key(Key),
                             IndexNode = hd(Preflist),
+                            %lager:info("Async read to ~p", [IndexNode]),
 					        ok = clocksi_vnode:async_read_data_item(IndexNode, Transaction, Key, Type),
                             NumToRead = Acc#tx_coord_state.num_to_read+1,
                             ReadSet = Acc#tx_coord_state.read_set,
