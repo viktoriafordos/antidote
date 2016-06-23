@@ -10,7 +10,7 @@
 -define(OP_TIMEOUT, infinity).
 -define(COORD_TIMEOUT, infinity).
 -define(COMM_TIMEOUT, infinity).
--define(PREP_TIMEOUT, 10).
+-define(PREP_TIMEOUT, 50).
 -define(ZMQ_TIMEOUT, 5000).
 -define(NUM_W, 2).
 -define(NUM_R, 2).
