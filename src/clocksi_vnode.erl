@@ -209,6 +209,7 @@ init([Partition]) ->
     CommittedTx = ets:new(committed_tx, [set]),
     loop_until_started(Partition, ?READ_CONCURRENCY),
     Node = node(),
+    lager:info("Certification check: ~p", [application:get_env(antidote, txn_cert)]),
     true = clocksi_readitem_fsm:check_partition_ready(Node, Partition, ?READ_CONCURRENCY),
     {ok, #state{partition = Partition,
         prepared_tx = PreparedTx,

@@ -29,6 +29,9 @@ init([]) ->
     {ok, #state{}}.
 
 handle_event({service_update, _Services}, State) ->
+    %{_,_,DownNodes,_,_} = riak_core_status:ring_status(),
+    %lists:foreach(fun(Node) -> io:format("~p Failed\n", [Node]) end, DownNodes),
+    %lists:foreach(fun(Node) -> riak_core:remove_from_cluster(Node) end, DownNodes),
     {ok, State}.
 
 handle_call(_Event, State) ->

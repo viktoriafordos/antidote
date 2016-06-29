@@ -504,14 +504,16 @@ handle_handoff_data(Data, #state{partition=Partition, logs_map=Map}=State) ->
 encode_handoff_item(Key, Operation) ->
     term_to_binary({Key, Operation}).
 
-is_empty(State=#state{logs_map=Map}) ->
-    LogIds = dict:fetch_keys(Map),
-    case no_elements(LogIds, Map) of
-        true ->
-            {true, State};
-        false ->
-            {false, State}
-    end.
+%is_empty(State=#state{logs_map=Map}) ->
+is_empty(State)->
+    {true, State}.
+    %LogIds = dict:fetch_keys(Map),
+    %case no_elements(LogIds, Map) of
+    %    true ->
+    %        {true, State};
+    %    false ->
+    %        {false, State}
+    %end.
 
 delete(State) ->
     {ok, State}.
@@ -553,21 +555,21 @@ terminate(_Reason, _State) ->
 %%      Return: true if all logs are empty. false if at least one log
 %%              contains data.
 %%
--spec no_elements([log_id()], dict()) -> boolean().
-no_elements([], _Map) ->
-    true;
-no_elements([LogId|Rest], Map) ->
-    case dict:find(LogId, Map) of
-        {ok, Log} -> 
-            case disk_log:chunk(Log, start) of
-                eof ->
-                    no_elements(Rest, Map);
-                _ ->
-                    false
-            end;
-        error ->
-            {error, no_log_for_preflist}
-    end.
+%-spec no_elements([log_id()], dict()) -> boolean().
+%no_elements([], _Map) ->
+%    true;
+%no_elements([LogId|Rest], Map) ->
+%    case dict:find(LogId, Map) of
+%        {ok, Log} -> 
+%            case disk_log:chunk(Log, start) of
+%                eof ->
+%                    no_elements(Rest, Map);
+%                _ ->
+%                    false
+%            end;
+%        error ->
+%            {error, no_log_for_preflist}
+%    end.
 
 %% @doc open_logs: open one log per partition in which the vnode is primary
 %%      Input:  LogFile: Partition concat with the atom log

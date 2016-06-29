@@ -73,11 +73,13 @@
 -spec start_transaction(Clock::snapshot_time(), Properties::txn_properties(), boolean())
                        -> {ok, txid()} | {error, reason()}.
 start_transaction(Clock, _Properties, KeepAlive) ->
+    %lager:info("Debug: At start_transaction1"),
     clocksi_istart_tx(Clock, KeepAlive).
 
 -spec start_transaction(Clock::snapshot_time(), Properties::txn_properties())
                        -> {ok, txid()} | {error, reason()}.
 start_transaction(Clock, _Properties) ->
+    %lager:info("Debug: At start_transaction2"),
     clocksi_istart_tx(Clock, false).
 
 -spec abort_transaction(TxId::txid()) -> {error, reason()}.
@@ -120,6 +122,7 @@ read_objects(Objects, TxId) ->
 update_objects(Updates, TxId) ->
     %% TODO: How to generate Actor,
     %% Actor ID must be removed from crdt update interface
+    %lager:info("Debug: At update_objects1"),
     Actor = TxId,
     %% Execute each update as in an interactive transaction
     Results = lists:map(
@@ -140,15 +143,18 @@ update_objects(Updates, TxId) ->
 -spec update_objects(snapshot_time(), term(), [{bound_object(), op(), op_param()}]) ->
                             {ok, snapshot_time()} | {error, reason()}.
 update_objects(Clock, Properties, Updates) ->
+    %lager:info("Debug: At update_objects2"),
     update_objects(Clock, Properties, Updates, false).
 
 update_objects(Clock, _Properties, Updates, StayAlive) ->
+    %lager:info("Debug: At update_objects3"),
     Actor = actor, %% TODO: generate unique actors
     Operations = lists:map(
                    fun({{Key, Type, _Bucket}, Op, OpParam}) ->
                            {update, {Key, Type, {{Op,OpParam}, Actor}}}
                    end,
                    Updates),
+    %lager:info("Debug: At update_objects3, completed mapping of operations"),
     SingleKey = case Operations of
                     [_O] -> %% Single key update
                         case Clock of 
@@ -164,13 +170,16 @@ update_objects(Clock, _Properties, Updates, StayAlive) ->
                 {ok, {_TxId, [], CT}} ->
                     {ok, CT};
                 {error, Reason} ->
+                    %lager:error("Error appending single key ~p", [Reason]),
                     {error, Reason}
             end;
         false ->
             case clocksi_execute_tx(Clock, Operations, update_clock, StayAlive) of
                 {ok, {_TxId, [], CommitTime}} ->
                     {ok, CommitTime};
-                {error, Reason} -> {error, Reason}
+                {error, Reason} -> 
+                    %lager:error("Error appending multiple keys ~p", [Reason]),
+                    {error, Reason}
             end
     end.
 
