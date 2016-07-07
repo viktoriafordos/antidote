@@ -141,9 +141,11 @@ generate_name(From) ->
     list_to_atom(pid_to_list(From) ++ "interactive_cord").
 
 start_tx({start_tx, From, ClientClock, UpdateClock}, SD0) ->
+    lager:info("start tx interactive"),
     {next_state, execute_op, start_tx_internal(From, ClientClock, UpdateClock, SD0)}.
 
 start_tx_internal(From, ClientClock, UpdateClock, SD = #tx_coord_state{stay_alive = StayAlive}) ->
+    lager:info("start tx interactive internal"),
     {Transaction, TransactionId} = create_transaction_record(ClientClock, UpdateClock, StayAlive, From, false),
     From ! {ok, TransactionId},
     SD#tx_coord_state{transaction=Transaction, num_to_read=0}.
@@ -453,6 +455,7 @@ receive_prepared(abort, S0) ->
     abort(S0);
 
 receive_prepared(timeout, S0) ->
+    lager:info("***TIMEOUT***"),
     abort(S0).
 
 single_committing({committed, CommitTime}, S0 = #tx_coord_state{from = From, full_commit = FullCommit}) ->

@@ -165,17 +165,21 @@ update_objects(Clock, _Properties, Updates, StayAlive) ->
                 end,
     case SingleKey of 
         true ->  %% if single key, execute the fast path
+            %lager:info("Debug: At update_objects3, update single key"),
             [{update, {K, T, Op}}] = Operations,
             case append(K, T, Op) of
                 {ok, {_TxId, [], CT}} ->
+                    lager:info("Debug: Success!! update single keys"),
                     {ok, CT};
                 {error, Reason} ->
                     %lager:error("Error appending single key ~p", [Reason]),
                     {error, Reason}
             end;
         false ->
+            %lager:info("Debug: At update_objects3, goning to update multiple keys"),
             case clocksi_execute_tx(Clock, Operations, update_clock, StayAlive) of
                 {ok, {_TxId, [], CommitTime}} ->
+                    lager:info("Debug: Success!!! update multiple keys"),
                     {ok, CommitTime};
                 {error, Reason} -> 
                     %lager:error("Error appending multiple keys ~p", [Reason]),
@@ -267,6 +271,7 @@ append(Key, Type, {OpParams, Actor}) ->
             clocksi_interactive_tx_coord_fsm:
                 perform_singleitem_update(Key, Type,{OpParams,Actor});
         {error, Reason} ->
+            lager:error("Error append operation ~p", [Reason]),
             {error, Reason}
     end.
 
@@ -300,10 +305,13 @@ read(Key, Type) ->
 -spec clocksi_execute_tx(Clock :: snapshot_time(),
                          [client_op()],snapshot_time(),boolean()) -> {ok, {txid(), [snapshot()], snapshot_time()}} | {error, term()}.
 clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive) ->
+    %lager:info("Before materializer check operations ~p",[Operations]),
     case materializer:check_operations(Operations) of
         {error, Reason} ->
+            lager:error("Error materializer check operations  ~p", [Reason]),
             {error, Reason};
         ok ->
+            %lager:info("Before generate name ~p",[Operations]),
 	    TxPid = case KeepAlive of
 			true ->
 			    whereis(clocksi_static_tx_coord_fsm:generate_name(self()));
@@ -312,19 +320,22 @@ clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive) ->
 		    end,
 	    CoordPid = case TxPid of
 			   undefined ->
+            		       lager:info("Before 1 send event ~p", [Operations]),
 			       {ok, CoordFsmPid} = clocksi_static_tx_coord_sup:start_fsm([self(), Clock, Operations, UpdateClock, KeepAlive]),
 			       CoordFsmPid;
 			   TxPid ->
+            		       lager:info("Before 2 send event ~p", [Operations]),
 			       ok = gen_fsm:send_event(TxPid, {start_tx, self(), Clock, Operations, UpdateClock}),
 			       TxPid
 		       end,
-        %lager:info("Before sending read"),
+            %lager:info("Before sending read ~p", [Operations]),
 	    case gen_fsm:sync_send_event(CoordPid, execute, ?OP_TIMEOUT) of
 		{aborted, Info} ->
             %lager:info("Read failed"),
+                    lager:error("Error sync send event (aborted) ~p", [Info]),
 		    {error, {aborted, Info}};
 		Other ->
-            %lager:info("Read succeeded"),
+                lager:info("Read succeeded ~p", [Operations]),
 		    Other
 	    end
     end.

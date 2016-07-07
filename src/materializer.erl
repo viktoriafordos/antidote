@@ -72,6 +72,7 @@ check_operations([Op | Rest]) ->
         true ->
             check_operations(Rest);
         false ->
+            lager:error("Error materializer check operations type check ~p", [Op]),
             {error, {type_check, Op}}
     end.
 
@@ -85,6 +86,7 @@ check_operation(Op) ->
         {read, {_, Type}} ->
             (riak_dt:is_riak_dt(Type) or materializer:is_crdt(Type));
         _ ->
+            lager:error("Error materializer check operations failed ~p", [Op]),
             false
     end.
 

@@ -34,9 +34,14 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 start_fsm(Args) ->
+    Operation = lists:nth(3, Args),
+    lager:info("Step1: ~p", [Operation]),
     _Res = random:seed(dc_utilities:now()),
+    lager:info("Step2: ~p", [Operation]),
     Random = random:uniform(?NUM_SUP),
+    lager:info("Step3: ~p", [Operation]),
     Module = generate_module_name(Random),
+    lager:info("Step4: ~p module ~p", [Operation,Module]),
     supervisor:start_child(Module, Args).
 
 generate_module_name(N) ->

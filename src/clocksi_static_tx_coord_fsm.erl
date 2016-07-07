@@ -98,15 +98,18 @@ start_link(From, Operations) ->
 %%%===================================================================
 
 init([From, ClientClock, Operations, UpdateClock, StayAlive]) ->
+    lager:info("Initializing ~p",[Operations]),
     {ok, execute_batch_ops, start_tx_internal(From, ClientClock, Operations, UpdateClock, clocksi_interactive_tx_coord_fsm:init_state(StayAlive, true, true))}.
 
 generate_name(From) ->
     list_to_atom(pid_to_list(From) ++ "static_cord").
 
-start_tx({start_tx, From, ClientClock, Operations, UpdateClock}, SD0) ->
+start_tx({start_tx, From, ClientClock, Operations, UpdateClock, Token}, SD0) ->
+    lager:info("Starting start_tx ~p",[Token]),
     {next_state, execute_batch_ops, start_tx_internal(From, ClientClock, Operations, UpdateClock, SD0)}.
 
 start_tx_internal(From, ClientClock, Operations, UpdateClock, SD = #tx_coord_state{stay_alive = StayAlive}) ->
+    %lager:info("Starting start_tx_internal ~p",[Operations]),
     {Transaction, _TransactionId} = clocksi_interactive_tx_coord_fsm:create_transaction_record(ClientClock, UpdateClock, StayAlive, From, true),
     SD#tx_coord_state{transaction=Transaction, operations=Operations}.
 
@@ -213,6 +216,7 @@ receive_prepared(abort, S0) ->
     {next_state, abort, S0, 0};
 
 receive_prepared(timeout, S0) ->
+    lager:info("***TIMEOUT****"),
     {next_state, abort, S0, 0}.
 
 single_committing({ok, {Key, Type, Snapshot}}, S0=#tx_coord_state{
