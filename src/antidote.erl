@@ -45,6 +45,7 @@
 %% Old APIs, We would still need them for tests and benchmarks
 -export([append/3,
          read/2,
+         clocksi_execute_tx/5,
          clocksi_execute_tx/4,
          clocksi_execute_tx/3,
          clocksi_execute_tx/2,
@@ -302,9 +303,12 @@ read(Key, Type) ->
 %%      the transaction, in case the tx ends successfully.
 %%      error message in case of a failure.
 %%
--spec clocksi_execute_tx(Clock :: snapshot_time(),
-                         [client_op()],snapshot_time(),boolean()) -> {ok, {txid(), [snapshot()], snapshot_time()}} | {error, term()}.
 clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive) ->
+    clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive, self()).
+
+-spec clocksi_execute_tx(Clock :: snapshot_time(),
+                         [client_op()],snapshot_time(),boolean(), term()) -> {ok, {txid(), [snapshot()], snapshot_time()}} | {error, term()}.
+clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive, ClientId) ->
     %lager:info("Before materializer check operations ~p",[Operations]),
     case materializer:check_operations(Operations) of
         {error, Reason} ->
@@ -314,17 +318,17 @@ clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive) ->
             %lager:info("Before generate name ~p",[Operations]),
 	    TxPid = case KeepAlive of
 			true ->
-			    whereis(clocksi_static_tx_coord_fsm:generate_name(self()));
+			    whereis(clocksi_static_tx_coord_fsm:generate_name(ClientId));
 			false ->
 			    undefined
 		    end,
 	    CoordPid = case TxPid of
 			   undefined ->
-            		       lager:info("Before 1 send event ~p", [Operations]),
+            		       %lager:info("Before 1 send event ~p", [Operations]),
 			       {ok, CoordFsmPid} = clocksi_static_tx_coord_sup:start_fsm([self(), Clock, Operations, UpdateClock, KeepAlive]),
 			       CoordFsmPid;
 			   TxPid ->
-            		       lager:info("Before 2 send event ~p", [Operations]),
+            		       %lager:info("Before 2 send event ~p", [Operations]),
 			       ok = gen_fsm:send_event(TxPid, {start_tx, self(), Clock, Operations, UpdateClock}),
 			       TxPid
 		       end,
@@ -335,7 +339,7 @@ clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive) ->
                     lager:error("Error sync send event (aborted) ~p", [Info]),
 		    {error, {aborted, Info}};
 		Other ->
-                lager:info("Read succeeded ~p", [Operations]),
+                %lager:info("Read succeeded ~p", [Operations]),
 		    Other
 	    end
     end.

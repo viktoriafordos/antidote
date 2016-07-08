@@ -98,14 +98,14 @@ start_link(From, Operations) ->
 %%%===================================================================
 
 init([From, ClientClock, Operations, UpdateClock, StayAlive]) ->
-    lager:info("Initializing ~p",[Operations]),
+    %lager:info("Initializing ~p",[Operations]),
     {ok, execute_batch_ops, start_tx_internal(From, ClientClock, Operations, UpdateClock, clocksi_interactive_tx_coord_fsm:init_state(StayAlive, true, true))}.
 
 generate_name(From) ->
     list_to_atom(pid_to_list(From) ++ "static_cord").
 
-start_tx({start_tx, From, ClientClock, Operations, UpdateClock, Token}, SD0) ->
-    lager:info("Starting start_tx ~p",[Token]),
+start_tx({start_tx, From, ClientClock, Operations, UpdateClock}, SD0) ->
+    %lager:info("Starting start_tx ~p",[Token]),
     {next_state, execute_batch_ops, start_tx_internal(From, ClientClock, Operations, UpdateClock, SD0)}.
 
 start_tx_internal(From, ClientClock, Operations, UpdateClock, SD = #tx_coord_state{stay_alive = StayAlive}) ->

@@ -34,16 +34,21 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 start_fsm(Args) ->
+    TS1 = os:timestamp(),
     Operation = lists:nth(3, Args),
-    lager:info("Step1: ~p", [Operation]),
+    %lager:info("Step1: ~p", [Operation]),
     _Res = random:seed(dc_utilities:now()),
-    lager:info("Step2: ~p", [Operation]),
+    %lager:info("Step2: ~p", [Operation]),
     %Random = random:uniform(?NUM_SUP),
-    lager:info("Step3: ~p", [Operation]),
+    %lager:info("Step3: ~p", [Operation]),
     %Module = generate_module_name(Random),
     %lager:info("Step4: ~p module ~p", [Operation,Module]),
     %supervisor:start_child(Module, Args).
-    supervisor:start_child(?MODULE, Args).
+    Ret = supervisor:start_child(?MODULE, Args),
+    TS2 = os:timestamp(),
+    TDuration = timer:now_diff(TS2,TS1),
+    lager:info("Time took to swan tx fsm: op ~p time ~p", [Operation,TDuration]),
+    Ret.
 
 %generate_module_name(N) ->
 %    list_to_atom(atom_to_list(?MODULE) ++ "-" ++ integer_to_list(N)).
