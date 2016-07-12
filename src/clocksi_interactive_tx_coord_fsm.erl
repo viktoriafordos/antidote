@@ -141,11 +141,11 @@ generate_name(From) ->
     list_to_atom(pid_to_list(From) ++ "interactive_cord").
 
 start_tx({start_tx, From, ClientClock, UpdateClock}, SD0) ->
-    lager:info("start tx interactive"),
+    %lager:info("start tx interactive"),
     {next_state, execute_op, start_tx_internal(From, ClientClock, UpdateClock, SD0)}.
 
 start_tx_internal(From, ClientClock, UpdateClock, SD = #tx_coord_state{stay_alive = StayAlive}) ->
-    lager:info("start tx interactive internal"),
+    %lager:info("start tx interactive internal"),
     {Transaction, TransactionId} = create_transaction_record(ClientClock, UpdateClock, StayAlive, From, false),
     From ! {ok, TransactionId},
     SD#tx_coord_state{transaction=Transaction, num_to_read=0}.
@@ -271,6 +271,7 @@ perform_update(Args, Updated_partitions, Transaction, Sender) ->
     {Key, Type, Param} = Args,
     Preflist = ?LOG_UTIL:get_preflist_from_key(Key),
     IndexNode = hd(Preflist),
+    %lager:info("Async read to ~p from ~p", [IndexNode,Preflist]),
     WriteSet = case lists:keyfind(IndexNode, 1, Updated_partitions) of
                    false ->
                        [];
