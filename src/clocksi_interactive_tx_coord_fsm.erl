@@ -537,8 +537,10 @@ abort(SD0 = #tx_coord_state{transaction = Transaction,
     NumToAck = length(UpdatedPartitions),
     case NumToAck of
         0 ->
+            lager:info("abort 0"),
             reply_to_client(SD0#tx_coord_state{state = aborted});
         _ ->
+            lager:info("abort 1"),
             ok = ?CLOCKSI_VNODE:abort(UpdatedPartitions, Transaction),
             {next_state, receive_aborted,
                 SD0#tx_coord_state{num_to_ack = NumToAck, state = aborted}}

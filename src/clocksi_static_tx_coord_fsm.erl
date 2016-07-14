@@ -98,7 +98,7 @@ start_link(From, Operations) ->
 %%%===================================================================
 
 init([From, ClientClock, Operations, UpdateClock, StayAlive]) ->
-    lager:info("Initializing ~p",[Operations]),
+    %lager:info("Initializing ~p",[Operations]),
     {ok, execute_batch_ops, start_tx_internal(From, ClientClock, Operations, UpdateClock, clocksi_interactive_tx_coord_fsm:init_state(StayAlive, true, true))}.
 
 generate_name(From) ->
@@ -118,7 +118,7 @@ start_tx_internal(From, ClientClock, Operations, UpdateClock, SD = #tx_coord_sta
 %%       to execute the next operation.
 execute_batch_ops(execute, Sender, SD=#tx_coord_state{operations = Operations,
 					     transaction = Transaction}) ->
-    lager:info("In execute op ~p sender ~p",[Operations,Sender]),
+    %lager:info("In execute op ~p sender ~p",[Operations,Sender]),
     ExecuteOp = fun (Operation, Acc) ->
 			case Acc of 
 			    {error, Reason} ->  {error, Reason};
@@ -133,7 +133,7 @@ execute_batch_ops(execute, Sender, SD=#tx_coord_state{operations = Operations,
                             %lager:info("Before reading"),
                             Preflist = ?LOG_UTIL:get_preflist_from_key(Key),
                             IndexNode = hd(Preflist),
-                            lager:info("Async read to ~p from ~p", [IndexNode,Preflist]),
+                            %lager:info("Async read to ~p from ~p", [IndexNode,Preflist]),
 					        ok = clocksi_vnode:async_read_data_item(IndexNode, Transaction, Key, Type),
                             NumToRead = Acc#tx_coord_state.num_to_read+1,
                             ReadSet = Acc#tx_coord_state.read_set,
@@ -188,7 +188,8 @@ receive_prepared({ok, {Key, Type, Snapshot}},
                             updated_partitions=UpdatedPartitions,
                             num_to_ack=NumToAck}) ->
     %%TODO: type is hard-coded..
-    Value = Type:value(Snapshot), 
+    Value = Type:value(Snapshot),
+    %lager:info("ReadSet ~p, Key ~p, Value ~p",[ReadSet,Key,Value]), 
     ReadSet1 = replace(ReadSet, Key, Value),
     case NumToRead of
         1 ->

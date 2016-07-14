@@ -31,6 +31,7 @@
          read_objects/2,
          read_objects/3,
          read_objects/4,
+         read_objects/5,
          update_objects/2,
          update_objects/3,
          update_objects/4,
@@ -192,6 +193,9 @@ read_objects(Clock, Properties, Objects) ->
     read_objects(Clock, Properties, Objects, false).
 
 read_objects(Clock, _Properties, Objects, StayAlive) ->
+    read_objects(Clock, _Properties, Objects, StayAlive, self()).
+
+read_objects(Clock, _Properties, Objects, StayAlive, ClientId) ->
     Args = lists:map(
              fun({Key, Type, _Bucket}) ->
                      {read, {Key, Type}}
@@ -220,7 +224,7 @@ read_objects(Clock, _Properties, Objects, StayAlive) ->
         false ->
             case application:get_env(antidote, txn_prot) of
                 {ok, clocksi} ->
-                    case clocksi_execute_tx(Clock, Args, update_clock, StayAlive) of
+                    case clocksi_execute_tx(Clock, Args, update_clock, StayAlive, ClientId) of
                         {ok, {_TxId, Result, CommitTime}} ->
                             {ok, Result, CommitTime};
                         {error, Reason} -> {error, Reason}
@@ -228,7 +232,7 @@ read_objects(Clock, _Properties, Objects, StayAlive) ->
                 {ok, gr} ->
                     case Args of
                         [_Op] -> %% Single object read = read latest value
-                            case clocksi_execute_tx(Clock, Args, update_clock, StayAlive) of
+                            case clocksi_execute_tx(Clock, Args, update_clock, StayAlive, ClientId) of
                                 {ok, {_TxId, Result, CommitTime}} ->
                                     {ok, Result, CommitTime};
                                 {error, Reason} -> {error, Reason}
@@ -333,7 +337,7 @@ clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive, ClientId) ->
 			       ok = gen_fsm:send_event(TxPid, {start_tx, ClientId, Clock, Operations, UpdateClock}),
 			       TxPid
 		       end,
-            lager:info("Before sending read ~p TxPid ~p", [Operations,erlang:process_info(CoordPid)]),
+            %lager:info("Before sending read ~p TxPid ~p", [Operations,erlang:process_info(CoordPid)]),
 	    Ret = case gen_fsm:sync_send_event(CoordPid, execute, ?OP_TIMEOUT) of
 		{aborted, Info} ->
             %lager:info("Read failed"),
