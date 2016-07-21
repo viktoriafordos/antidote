@@ -47,10 +47,6 @@ riak-test: currentdevrel
 stage-riak-test: all
 	$(foreach dep,$(wildcard riak_test/*.erl), ../riak_test/riak_test -v -c antidote -t $(dep);)
 
-my-test: 
-	$(REBAR) skip_deps=true riak_test_compile
-	../riak_test/riak_test -v -c antidote -t online_store_test
-
 ##
 ## Developer targets
 ##
@@ -91,3 +87,16 @@ include tools.mk
 
 typer:
 	typer --annotate -I ../ --plt $(PLT) -r src
+
+
+online-store-test:
+	$(REBAR) skip_deps=true riak_test_compile
+	../riak_test/riak_test -v -c antidote -t online_store_test
+
+wallet-test:
+	$(REBAR) skip_deps=true riak_test_compile
+	../riak_test/riak_test -v -c antidote -t wallet_test
+
+ad-counter-test:
+	$(REBAR) skip_deps=true riak_test_compile
+	../riak_test/riak_test -v -c antidote -t ad_counter_test

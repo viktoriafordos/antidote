@@ -96,21 +96,22 @@ handle_command({log_event, Operation}, _Sender, State) ->
       %% ==================== Commander Instrumentation ====================
       %%  Update upstream transactions data in commander, and have them recorded
       %% ===================================================================
+      LastOp = lists:last(Ops),
+      CommitPld = LastOp#operation.payload,
+      commit = CommitPld#log_record.op_type, %% sanity check
+      {{DCID, CommitTime}, SnapshotTime} = CommitPld#log_record.op_payload,
+      TxId = CommitPld#log_record.tx_id,
+      Partition = Txn#interdc_txn.partition,
+      Data = {TxId, DCID, CommitTime, SnapshotTime, Partition},
       Phase = rpc:call('riak_test@127.0.0.1', commander, phase, []),
+      io:format("~n====== Phase: ~p ======~n", [Phase]),
       case Phase of
         record ->
-          io:format("~nExecution in record instrumentation...~n"),
-          LastOp = lists:last(Ops),
-          CommitPld = LastOp#operation.payload,
-          commit = CommitPld#log_record.op_type, %% sanity check
-          {{DCID, CommitTime}, SnapshotTime} = CommitPld#log_record.op_payload,
-          TxId = CommitPld#log_record.tx_id,
-          Partition = Txn#interdc_txn.partition,
-          Data = {TxId, DCID, CommitTime, SnapshotTime, Partition},
+          %%% TODO: merge following two lines into one
           ok = rpc:call('riak_test@127.0.0.1', commander, update_upstream_event_data, [Data]),
           ok = rpc:call('riak_test@127.0.0.1', commander, update_transactions_data, [TxId, Txn]);
         replay ->
-          noop;
+          ok = rpc:call('riak_test@127.0.0.1', commander, update_replay_txns_data, [Data, Txn, TxId]);
         _ -> noop
       end,
       %% ==================== End of Instrumentation Region ====================

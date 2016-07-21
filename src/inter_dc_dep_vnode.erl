@@ -116,7 +116,18 @@ try_store(State, Txn=#interdc_txn{dcid = DCID, partition = Partition, timestamp 
   case vectorclock:ge(CurrentClock, Dependencies) of
 
     %% If not, the transaction will not be stored right now.
-    false -> {State, false};
+    false ->
+      %% ==================== Commander Instrumentation ====================
+      %% Ensure dependency is satisfied in replay phase
+      %% ===================================================================
+      Phase = rpc:call('riak_test@127.0.0.1', commander, phase, []),
+      case Phase of
+        replay ->
+          throw(io_lib:format("~nDependency is not satisfied.~nCurrentClock: ~p~nDependency: ~p~n", [dict:to_list(CurrentClock), dict:to_list(Dependencies)]));
+        _ -> skip
+      end,
+      %% ==================== End of Instrumentation Region ====================
+      {State, false};
 
     %% If so, store the transaction
     true ->
@@ -130,9 +141,19 @@ try_store(State, Txn=#interdc_txn{dcid = DCID, partition = Partition, timestamp 
       ok = lists:foreach(fun(Op) -> materializer_vnode:update(Op#clocksi_payload.key, Op) end, ClockSiOps),
 
       %% ==================== Commander Instrumentation ====================
-      %% Send the downstream event data to the commander, and have them recorded
+      %% Send the downstream event data to the commander
       %% ===================================================================
-      ok = rpc:call('riak_test@127.0.0.1', commander, get_downstream_event_data, [{dc_utilities:get_my_dc_id(), node(), Txn}]),
+      Phase = rpc:call('riak_test@127.0.0.1', commander, phase, []),
+      case Phase of
+        record ->
+          ok = rpc:call('riak_test@127.0.0.1', commander, get_downstream_event_data, [{dc_utilities:get_my_dc_id(), node(), Txn}]);
+        replay ->
+          LastOp = lists:last(Ops),
+          CommitPld = LastOp#operation.payload,
+          commit = CommitPld#log_record.op_type, %% sanity check
+          TxId = CommitPld#log_record.tx_id,
+          rpc:call('riak_test@127.0.0.1', commander, acknowledge_delivery, [TxId])
+      end,
       %% ==================== End of Instrumentation Region ====================
 
       {update_clock(State, DCID, Timestamp), true}

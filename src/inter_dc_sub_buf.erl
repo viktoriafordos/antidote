@@ -26,6 +26,7 @@
 
 %% API
 -export([
+  deliver/1,
   new_state/1,
   process/2]).
 
