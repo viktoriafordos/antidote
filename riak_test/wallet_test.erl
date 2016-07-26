@@ -1,7 +1,7 @@
 -module(wallet_test).
 
 %% API
--export([confirm/0, main_test/3, dc1_txns/3, dc2_txns/3, dc3_txns/3, handle_event/1]).
+-export([confirm/0, main_test/3, dc1_txns/3, dc2_txns/3, dc3_txns/3, handle_event/1, handle_object_invariant/2]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -32,6 +32,10 @@ main_test(Cluster1, Cluster2, Cluster3) ->
   Node3 = hd(Cluster3),
   Key = wallet_key,
   Wallet = {Key, riak_dt_pncounter, bucket},
+
+  %%% Specify invariant objects
+  comm_test:objects(?MODULE, [Wallet]),
+
   Pid = self(),
 
   {_Re, CC} = comm_test:event(?MODULE, [2, Node1, [Wallet, 500]]),
@@ -117,3 +121,10 @@ handle_event([3, Node, AppArgs]) ->
     [Wallet1, Wallet2, N] = AppArgs,
     CT = wallet:transfer(Node, Wallet1, Wallet2, N),
     CT.
+
+handle_object_invariant(Node, [Wallet]) ->
+  WalletVal = get_val(Node, Wallet, ignore),
+  %%% if assert fails inform commander to provide a counter example
+  io:format("~nWallet value:~p~n", [WalletVal]),
+  ?assert(WalletVal >= 0),
+  true.
