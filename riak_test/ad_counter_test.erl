@@ -10,7 +10,7 @@
 -author("maryam").
 
 %% API
--export([confirm/0, main_test/3, dc1_txns/3, dc2_txns/3, dc3_txns/3, handle_event/1]).
+-export([confirm/0, main_test/3, dc1_txns/3, dc2_txns/3, dc3_txns/3, handle_event/1, handle_object_invariant/2]).
 -include_lib("eunit/include/eunit.hrl").
 
 -define(HARNESS, (rt_config:get(rt_harness))).
@@ -42,6 +42,9 @@ main_test(Cluster1, Cluster2, Cluster3) ->
   Key = ad_key,
   Ad = {Key, riak_dt_pncounter, bucket},
   Pid = self(),
+
+  %%% Specify invariant objects
+  comm_test:objects(?MODULE, [Ad]),
 
   CT1 = dc1_txns(Node1, Ad, Pid),
   CT2 = dc2_txns(Node2, Ad, Pid),
@@ -89,3 +92,10 @@ handle_event([1, Node, AppArgs]) ->
   [Ad] = AppArgs,
   {Res1, {_Tx1, CT1}} = ad_counter:view_ad(Node, Ad),
   {Res1, CT1}.
+
+handle_object_invariant(Node, [Ad]) ->
+  AdVal = ad_counter:get_val(Node, Ad, ignore),
+  %%% if assert fails inform commander to provide a counter example
+  io:format("~nAd value:~p~n", [AdVal]),
+  ?assert(AdVal =< 5 ),
+  true.
