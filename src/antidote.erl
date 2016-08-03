@@ -337,7 +337,7 @@ clocksi_execute_tx(Clock, Operations, UpdateClock, KeepAlive, ClientId) ->
 			       ok = gen_fsm:send_event(TxPid, {start_tx, ClientId, Clock, Operations, UpdateClock}),
 			       TxPid
 		       end,
-            %lager:info("Before sending read ~p TxPid ~p", [Operations,erlang:process_info(CoordPid)]),
+            %lager:info("Before sending read ~p TxPid ~p total ~p", [Operations,CoordPid,length(erlang:processes())]),
 	    Ret = case gen_fsm:sync_send_event(CoordPid, execute, ?OP_TIMEOUT) of
 		{aborted, Info} ->
             %lager:info("Read failed"),
