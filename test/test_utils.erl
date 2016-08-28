@@ -34,14 +34,17 @@
          wait_until_disconnected/2,
          wait_until_connected/2,
          wait_until_registered/2,
+         wait_until_pingable/1,
          wait_for_service/2,
          join/2,
+         brutal_kill/1,
          start_node/2,
          connect_cluster/1,
          partition_cluster/2,
          heal_cluster/2,
          join_cluster/1,
-         set_up_clusters_common/1]).
+         set_up_clusters_common/1,
+         start_and_wait/2]).
 
 at_init_testsuite() ->
 %% this might help, might not...
@@ -172,6 +175,12 @@ start_node(Name, Config) ->
             wait_until_offline(Node),
             start_node(Name, Config)
     end.
+
+%% @doc Start the specified Riak `Node' and wait for it to be pingable
+start_and_wait(Node, Config) ->
+    start_node(Node, Config),
+    ?assertEqual(ok, wait_until_pingable(Node)).
+
 
 partition_cluster(ANodes, BNodes) ->
     pmap(fun({Node1, Node2}) ->
@@ -473,6 +482,26 @@ join(Node, PNode) ->
     ?assertEqual(ok, join_with_retry(Fun)),
     ok.
 
+% when you just can't wait
+brutal_kill(Node) ->
+    lager:info("Killing node ~p", [Node]),
+    OSPidToKill = rpc:call(Node, os, getpid, []),
+    %% try a normal kill first, but set a timer to
+    %% kill -9 after 5 seconds just in case
+    rpc:cast(Node, timer, apply_after,
+             [5000, os, cmd, [io_lib:format("kill -9 ~s", [OSPidToKill])]]),
+    rpc:cast(Node, os, cmd, [io_lib:format("kill -15 ~s", [OSPidToKill])]),
+    ok.
+
+%% @doc Wait until the specified node is pingable
+wait_until_pingable(Node) ->
+    lager:info("Wait until ~p is pingable", [Node]),
+    F = fun(N) ->
+                net_adm:ping(N) =:= pong
+        end,
+    ?assertEqual(ok, wait_until(Node, F)),
+    ok.
+
 
 %% Build clusters for all test suites.
 set_up_clusters_common(Config) ->
@@ -494,3 +523,4 @@ set_up_clusters_common(Config) ->
         connect_cluster(Clusterheads)
    end,
    [Cluster1, Cluster2, Cluster3].
+
