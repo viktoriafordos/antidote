@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2015 Helium Systems, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -170,8 +171,9 @@ start_node(Name, Config) ->
             ct:print("Node ~p started",[Node]),
 
             Node;
-        {error, _, Node} ->
-            ct_slave:stop(Name),
+        {error, Reason, Node} ->
+            ct:print("Couldn't start ~p: ~p",[Node, Reason]),
+            ct_slave:stop(Node),
             wait_until_offline(Node),
             start_node(Name, Config)
     end.
