@@ -22,7 +22,7 @@
 
 -module(books).
 
--export([test_crdts/0, add_user/0, add_user2/0, add_owned_book/0, remove_book/0, borrow_book/0]).
+-export([test_crdts/0, add_user/0, add_user2/0, add_owned_book/0, remove_book/0, borrow_book/0,borrow_book_causal/0]).
 
 test_crdts() ->
    CounterObj = {my_counter, antidote_crdt_counter, my_bucket},
@@ -47,7 +47,7 @@ add_user2() ->
 add_owned_book() ->
    Owned = {michel, antidote_crdt_orset, owned_bucket},
    {ok, _} = antidote:update_objects(ignore, [], [{Owned, add, "Algorithms"}]),
-   {ok, _} = antidote:update_objects(ignore, [], [{Owned, add_all, ["Erlang","Java"]}]),   
+   {ok, _} = antidote:update_objects(ignore, [], [{Owned, add_all, ["Erlang", "Java"]}]),   
    {ok, Result, _} = antidote:read_objects(ignore, [], [Owned]),
    Result.
 
@@ -69,6 +69,24 @@ borrow_book() ->
    
    Result.
    
+borrow_book_causal() ->
+   {ok, TxId} = antidote:start_transaction(ignore, []),
+   Owned = {michel, antidote_crdt_orset, owned_bucket},
+   ok = antidote:update_objects([{Owned, remove, "Java"}], TxId),
+   Borrowed = {alex, antidote_crdt_orset, borrowed_bucket},
+   ok = antidote:update_objects([{Borrowed, add, "Java"}], TxId),
+   {ok, TS} = antidote:commit_transaction(TxId),
+
+   {ok, TxId2} = antidote:start_transaction(TS, []),
+   ok = antidote:update_objects([{Borrowed, remove, "Java"}], TxId2),
+   Borrowed2 = {hugo, antidote_crdt_orset, borrowed_bucket},
+   ok = antidote:update_objects([{Borrowed, add, "Java"}], TxId2),
+   {ok, _TS} = antidote:commit_transaction(TxId2),
+
+
+   {ok, Result, _} = antidote:read_objects(TS, [], [Owned, Borrowed, Borrowed2]), 
+   
+   Result.
 
 
 
