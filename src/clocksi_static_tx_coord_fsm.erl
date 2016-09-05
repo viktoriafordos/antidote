@@ -141,7 +141,7 @@ execute_batch_ops(execute, Sender, SD=#tx_coord_state{operations = Operations,
 				    end
 			end
 		end,    
-    NewState = lists:foldl(ExecuteOp, SD, Operations),
+    NewState = lists:foldl(ExecuteOp, SD, lists:reverse(Operations)),
     _Res = case NewState of 
 	       {error, Reason} ->
 		   %From ! {error, Reason},

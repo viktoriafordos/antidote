@@ -80,13 +80,13 @@ borrow_book_causal() ->
    {ok, TxId2} = antidote:start_transaction(TS, []),
    ok = antidote:update_objects([{Borrowed, remove, "Java"}], TxId2),
    Borrowed2 = {hugo, antidote_crdt_orset, borrowed_bucket},
-   ok = antidote:update_objects([{Borrowed, add, "Java"}], TxId2),
-   {ok, _TS} = antidote:commit_transaction(TxId2),
+   ok = antidote:update_objects([{Borrowed2, add, "Java"}], TxId2),
+   {ok, TS2} = antidote:commit_transaction(TxId2),
 
 
-   {ok, Result, _} = antidote:read_objects(TS, [], [Owned, Borrowed, Borrowed2]), 
+   {ok, Result, _} = antidote:read_objects(TS2, [], [Owned, Borrowed, Borrowed2]), 
    
-   Result.
+   [Result].
 
 
 
