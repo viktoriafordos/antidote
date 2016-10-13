@@ -375,10 +375,16 @@ clocksi_bulk_update(Operations) ->
 
 -spec clocksi_read(ClientClock :: snapshot_time(),
                    Key :: key(), Type:: type()) -> {ok, {txid(), [snapshot()], snapshot_time()}} | {error, term()}.
-clocksi_read(ClientClock, Key, Type) ->
-    {ok, TxId} = start_transaction(ClientClock, []),
-    {ok, ReadResult} = read_objects([{Key, Type, ?GLOBAL_BUCKET}], TxId),
-    {ok, CommitTime} = commit_transaction(TxId),
+clocksi_read(ClientClock, KeyOrKeyBucket, Type)->
+    {Key, Bucket}=case KeyOrKeyBucket of
+        {K, B}->
+            {K, B};
+        KeyOnly->
+            {KeyOnly, ?GLOBAL_BUCKET}
+    end,
+    {ok, TxId}=start_transaction(ClientClock, []),
+    {ok, ReadResult}=read_objects([{Key, Type, Bucket}], TxId),
+    {ok, CommitTime}=commit_transaction(TxId),
     {ok, {TxId, ReadResult, CommitTime}}.
 %%    clocksi_execute_tx(ClientClock, [{read, {Key, Type}}]).
 

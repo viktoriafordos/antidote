@@ -139,10 +139,15 @@ try_store(State, Txn=#interdc_txn{dcid = DCID, partition = Partition, timestamp 
 					   [Partition], Ops, false),
 
       %% Update the materializer (send only the update operations)
-      ClockSiOps = updates_to_operation_payloads(Txn),
-      [OpHead | _OpsTail] = ClockSiOps,
-      Transaction = #transaction{transactional_protocol=State#state.transactional_protocol, txn_id=OpHead#operation_payload.txid},
-      ok = lists:foreach(fun(Op) -> materializer_vnode:update(Op#operation_payload.key, Op, Transaction) end, ClockSiOps),
+      case updates_to_operation_payloads(Txn) of
+        []->
+          do_nothing;
+        Ops->
+          OpTail = lists:last(Ops),
+          Transaction=#transaction{transactional_protocol=State#state.transactional_protocol, txn_id=OpTail#operation_payload.txid},
+          ok=lists:foreach(fun(Op)->
+            materializer_vnode:update(Op#operation_payload.key, Op, Transaction) end, Ops)
+      end,
       {update_clock(State, DCID, Timestamp), true}
   end.
 

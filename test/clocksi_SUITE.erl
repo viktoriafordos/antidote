@@ -113,7 +113,7 @@ clocksi_read_nonupdated_key_test(Config) ->
     Nodes = proplists:get_value(nodes, Config),
     
     FirstNode = hd(Nodes),
-    Key1=clocksi_test_key,
+    Key1=clocksi_test_key_lww,
     Type=antidote_crdt_lwwreg,
     BoundObject = {Key1, Type, bucket},
     {ok, TxId} = rpc:call(FirstNode, antidote, start_transaction, [ignore, []]),
@@ -155,7 +155,7 @@ clocksi_test1(Config) ->
                       {read, {Key1, Type}}]]),
     ?assertMatch({ok, _}, Result2),
     {ok, {_, ReadSet2, _}}=Result2,
-    ?assertMatch([0,0], ReadSet2),
+    ?assertMatch([0,1], ReadSet2),
 
     %% Update is persisted && update to multiple keys are atomic
     Result3=rpc:call(FirstNode, antidote, clocksi_execute_tx,
