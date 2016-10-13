@@ -425,7 +425,7 @@ clocksi_iread({_, _, CoordFsmPid}, Key, Type) ->
     case materializer:check_operations([{read, {Key, Type}}]) of
         ok ->
             case gen_fsm:sync_send_event(CoordFsmPid, {read, {{Key, ?GLOBAL_BUCKET}, Type}}, ?OP_TIMEOUT) of
-                {ok, Res} -> {ok, Res};
+                {ok, [Res]} -> {ok, Res};
                 {error, Reason} -> {error, Reason}
             end;
         {error, Reason} ->
