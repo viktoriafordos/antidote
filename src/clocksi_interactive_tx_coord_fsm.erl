@@ -491,15 +491,15 @@ receive_read_objects_result({ok, {Key, Type, {Snapshot, SnapshotCommitParams}}},
 apply_tx_updates_to_snapshot(Key, CoordState, Transaction, Type, Snapshot)->
     Preflist=?LOG_UTIL:get_preflist_from_key(Key),
     IndexNode=hd(Preflist),
-    WriteSet=case lists:keyfind(IndexNode, 1, CoordState#tx_coord_state.updated_partitions) of
+    case lists:keyfind(IndexNode, 1, CoordState#tx_coord_state.updated_partitions) of
         false->
-            [];
+            Snapshot;
         {IndexNode, WS}->
-            WS
-    end,
-    FileteredAndReversedUpdates=clocksi_vnode:reverse_and_filter_updates_per_key(WriteSet, Key, Transaction),
-    SnapshotAfterMyUpdates=clocksi_materializer:materialize_eager(Type, Snapshot, FileteredAndReversedUpdates),
-    SnapshotAfterMyUpdates.
+            FileteredAndReversedUpdates=clocksi_vnode:reverse_and_filter_updates_per_key(WS, Key, Transaction),
+            SnapshotAfterMyUpdates=clocksi_materializer:materialize_eager(Type, Snapshot, FileteredAndReversedUpdates),
+            SnapshotAfterMyUpdates
+    end.
+    
 
 
 
