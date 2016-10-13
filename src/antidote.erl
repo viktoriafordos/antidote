@@ -497,10 +497,17 @@ gr_snapshot_read(ClientClock, Args) ->
 
 execute_ops([], _TxId, ReadSet) ->
     lists:reverse(ReadSet);
-execute_ops([{update, {Key, Type, OpParams}}|Rest], TxId, ReadSet) ->
-    case  update_objects([{{Key, Type, ?GLOBAL_BUCKET}, OpParams}], TxId) of
-        ok -> execute_ops(Rest, TxId, ReadSet);
-        {error, Reason} ->
+execute_ops([{update, {KeyOrKeyBucket, Type, OpParams}}|Rest], TxId, ReadSet)->
+    {Key, Bucket}=case KeyOrKeyBucket of
+        {K, B}->
+            {K, B};
+        KeyOnly->
+            {KeyOnly, ?GLOBAL_BUCKET}
+    end,
+    case update_objects([{{Key, Type, Bucket}, OpParams}], TxId) of
+        ok->
+            execute_ops(Rest, TxId, ReadSet);
+        {error, Reason}->
             {error, Reason}
     end;
 execute_ops([{read, {KeyOrKeyBucket, Type}}|Rest], TxId, ReadSet) ->
