@@ -111,7 +111,10 @@ execute_pre_commit_hook({Key, Bucket}, Type, Param) ->
             try Module:Function({{Key, Bucket}, Type, Param}) of
                 {ok, Res} -> Res
             catch
-                _:Reason -> {error, Reason}
+                CL:Reason ->
+                lager:error("Pre commit hook failed with reason: {~p, ~p}. ~p",
+                            [CL, Reason, erlang:get_stacktrace()]),
+                {error, Reason}
             end
     end;
 %% The following is kept to be backward compatible with the old

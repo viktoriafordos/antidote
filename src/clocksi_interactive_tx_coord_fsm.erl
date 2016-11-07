@@ -252,6 +252,7 @@ perform_singleitem_update(Key, Type, Params) ->
                     {error, Reason}
             end;
         {error, Reason} ->
+            lager:info("Pre commit hook failed. Reason ~p", [Reason]),
             {error, Reason}
     end.
 
